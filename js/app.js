@@ -118,33 +118,93 @@ function setupSvgInteractions(parts) {
     // Use querySelectorAll to get the paths in the same order as parsed
     const shapes = ['path', 'rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon'];
     const elements = svgEl.querySelectorAll(shapes.join(','));
-    
+
     // Assign index and click listener
     elements.forEach((el, index) => {
         if (index < parts.length) {
             el.dataset.partIndex = index;
             // Set default mode
             parts[index].toolpathMode = 'on-path';
-            
+
             el.addEventListener('click', (e) => {
                 e.stopPropagation();
-                
+                // Ignore click if we were dragging
+                if (isDraggingSvg) return;
+
                 // Get selected toolpath mode from radio buttons
                 const selectedModeRadio = document.querySelector('input[name="toolpathMode"]:checked');
                 const selectedMode = selectedModeRadio ? selectedModeRadio.value : 'on-path';
-                
+
                 // Update part data
                 parts[index].toolpathMode = selectedMode;
-                
+
                 // Update CSS class
                 el.classList.remove('path-on-path', 'path-outside', 'path-inside', 'path-drill');
                 el.classList.add(`path-${selectedMode}`);
-                
+
                 log(`已將 Part_${index + 1} 設為 ${selectedMode === 'outside' ? '銑線外' : selectedMode === 'inside' ? '銑線內' : selectedMode === 'drill' ? '鑽孔' : '銑線上'}。`);
             });
         }
     });
+
+    // Implement Pan and Zoom
+    let scale = 1;
+    let panX = 0;
+    let panY = 0;
+    let isDragging = false;
+    let startX = 0;
+    let startY = 0;
+
+    // Use a wrapper or transform the SVG directly? 
+    // It's safer to transform the SVG element itself.
+    svgEl.style.transformOrigin = 'center center';
+
+    function updateTransform() {
+        svgEl.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+    }
+
+    // Zoom (Mouse Wheel)
+    previewSvg.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const zoomDelta = e.deltaY > 0 ? 0.9 : 1.1;
+        scale *= zoomDelta;
+        // Limit zoom
+        scale = Math.max(0.1, Math.min(scale, 10));
+        updateTransform();
+    }, { passive: false });
+
+    // Pan (Mouse Drag)
+    previewSvg.addEventListener('mousedown', (e) => {
+        // Only pan on left click background (not on the path if we want to click path)
+        // Wait, to allow both: click on path selects it, drag pans.
+        isDragging = true;
+        isDraggingSvg = false;
+        startX = e.clientX - panX;
+        startY = e.clientY - panY;
+        previewSvg.style.cursor = 'grabbing';
+    });
+
+    window.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        isDraggingSvg = true; // Flage to prevent click event on paths
+        panX = e.clientX - startX;
+        panY = e.clientY - startY;
+        updateTransform();
+    });
+
+    window.addEventListener('mouseup', () => {
+        isDragging = false;
+        previewSvg.style.cursor = 'default';
+        // Reset the drag flag slightly after to allow click events to complete
+        setTimeout(() => isDraggingSvg = false, 50);
+    });
+
+    // Initial reset
+    updateTransform();
 }
+
+// Global flag to prevent click after drag
+let isDraggingSvg = false;
 
 function getMfgData() {
     return {

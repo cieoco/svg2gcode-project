@@ -189,11 +189,11 @@ body {
 
 #previewSvg svg * {
     stroke: var(--primary);
-    stroke-width: 0.3px;
+    stroke-width: 1.5px;
     vector-effect: non-scaling-stroke;
     fill: transparent !important;
     pointer-events: all;
-    transition: stroke 0.2s;
+    transition: stroke 0.2s, stroke-width 0.2s;
     cursor: pointer;
 }
 
@@ -218,7 +218,7 @@ body {
 }
 
 #previewSvg svg *:hover {
-    stroke-width: 1px !important;
+    stroke-width: 2.5px !important;
     opacity: 0.8;
 }
 
