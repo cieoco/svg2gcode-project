@@ -452,11 +452,6 @@ body {
 }
 
 /* Toolpath Order List */
-.toolpath-list-container {
-    scrollbar-width: thin;
-    scrollbar-color: var(--border) transparent;
-}
-
 .toolpath-item {
     display: flex;
     align-items: center;
