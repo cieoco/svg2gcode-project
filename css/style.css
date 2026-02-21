@@ -198,9 +198,9 @@ body {
 }
 
 #previewSvg svg *.path-none {
-    stroke: #6b7280 !important;
-    /* Tailwind gray-500 */
-    opacity: 0.3 !important;
+    stroke: #9ca3af !important;
+    /* Tailwind gray-400 */
+    opacity: 0.7 !important;
 }
 
 #previewSvg svg *.path-on-path {
