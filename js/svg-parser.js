@@ -133,16 +133,43 @@ export function parseSVG(svgText) {
         const length = pathEl.getTotalLength();
         if (length === 0) return;
 
+        // Build a transform matrix from the element's transform attribute
+        // Handles matrix(a,b,c,d,e,f), translate(x,y), scale(s)
+        let matrix = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }; // identity
+        const transformAttr = el.getAttribute('transform');
+        if (transformAttr) {
+            const matrixMatch = transformAttr.match(/matrix\s*\(\s*([^\)]+)\)/);
+            if (matrixMatch) {
+                const vals = matrixMatch[1].trim().split(/[\s,]+/).map(parseFloat);
+                if (vals.length === 6) {
+                    matrix = { a: vals[0], b: vals[1], c: vals[2], d: vals[3], e: vals[4], f: vals[5] };
+                }
+            } else {
+                const translateMatch = transformAttr.match(/translate\s*\(\s*([^\)]+)\)/);
+                if (translateMatch) {
+                    const vals = translateMatch[1].trim().split(/[\s,]+/).map(parseFloat);
+                    matrix.e = vals[0] || 0;
+                    matrix.f = vals[1] || 0;
+                }
+            }
+        }
+
+        // Helper: apply 2D affine matrix to a point
+        const applyMatrix = (pt) => ({
+            x: matrix.a * pt.x + matrix.c * pt.y + matrix.e,
+            y: matrix.b * pt.x + matrix.d * pt.y + matrix.f
+        });
+
         // Sample points along the path
         const points = [];
         // Use a finer resolution for accurate curve representation.
-        // Max 0.5mm step to capture even tight corners. This gives ~2000 pts for a 1000mm path.
-        // Cap minimum step at 0.1mm to avoid too many points on tiny paths.
+        // 0.5mm step: gives ~2000 pts for a 1000mm path, well within range for smooth curves
         const numSamples = Math.min(4000, Math.max(64, Math.ceil(length / 0.5)));
         const step = length / numSamples;
 
         for (let i = 0; i <= numSamples; i++) {
-            const pt = pathEl.getPointAtLength(i * step);
+            const rawPt = pathEl.getPointAtLength(i * step);
+            const pt = applyMatrix(rawPt);
             points.push({ x: pt.x, y: -pt.y }); // Y is flipped in CNC compared to SVG
         }
 
@@ -157,7 +184,7 @@ export function parseSVG(svgText) {
             id: `Part_${partIdCounter++}`,
             barStyle: 'path',
             points: points,
-            holes: [] // Ignore holes within paths for simple MVP
+            holes: []
         });
     });
 
