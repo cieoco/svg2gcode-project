@@ -460,11 +460,6 @@ export function profileTangentHullOps({
     return lines;
 }
 
-/**
- * Mathematically offsets a polygon/path by a given distance.
- * Positive offset moves points "outward" (right side of directed edge) assuming CCW polygon.
- * Simple normal displacement algorithm (does not handle complex self-intersections or sharp corner clipping perfectly).
- */
 export function offsetPath(points, offsetDist) {
     if (!points || points.length < 2 || offsetDist === 0) return points;
 
@@ -473,18 +468,33 @@ export function offsetPath(points, offsetDist) {
     // Check if closed
     const isClosed = Math.abs(points[0].x - points[n - 1].x) < 0.001 && Math.abs(points[0].y - points[n - 1].y) < 0.001;
 
+    // Calculate signed polygon area to determine winding (CW vs CCW)
+    let area = 0;
+    for (let i = 0; i < n; i++) {
+        let p1 = points[i];
+        let p2 = points[(i + 1) % n];
+        area += (p1.x * p2.y - p2.x * p1.y);
+    }
+    // In SVG (Y down), positive area means Clockwise. 
+    const isCW = area > 0;
+
     // Helper: get normal vector of segment (p1 -> p2)
     const getNormal = (p1, p2) => {
         let dx = p2.x - p1.x;
         let dy = p2.y - p1.y;
         let len = Math.hypot(dx, dy);
         if (len === 0) return { nx: 0, ny: 0 };
-        // Perpendicular pointing to the "right"
-        // In screen space (y downwards), to expand a path (outside) you want right normal if path is CW.
-        // SVG paths are often CW for outer boundaries in screen space. 
-        // We'll use (ny, -nx) or (-ny, nx). 
-        // Let's use standard Right Hand Rule (-dy/len, dx/len)
-        return { nx: -dy / len, ny: dx / len };
+
+        // If CW, the "Outside" of the shape is on the LEFT of the directed edge.
+        // If CCW, the "Outside" is on the RIGHT.
+        // offsetDist > 0 means Outside. 
+        if (isCW) {
+            // Left Normal: (dy, -dx)
+            return { nx: dy / len, ny: -dx / len };
+        } else {
+            // Right Normal: (-dy, dx)
+            return { nx: -dy / len, ny: dx / len };
+        }
     };
 
     // Calculate normals for each segment
@@ -507,6 +517,10 @@ export function offsetPath(points, offsetDist) {
             nextN = normals[i];
         }
 
+        // If a segment has 0 length and gave a 0 normal, borrow from the other
+        if (prevN.nx === 0 && prevN.ny === 0) prevN = nextN;
+        if (nextN.nx === 0 && nextN.ny === 0) nextN = prevN;
+
         // Average normal
         let avgNx = prevN.nx + nextN.nx;
         let avgNy = prevN.ny + nextN.ny;
@@ -522,17 +536,23 @@ export function offsetPath(points, offsetDist) {
         avgNx /= len;
         avgNy /= len;
 
-        // Apply offset (miter-like expansion, simplified)
-        // dot(avgN, N1) helps scale the offset for sharp corners
+        // Apply offset (miter-like expansion)
+        // dot(avgN, N1) helps scale the offset for corners
         let dot = avgNx * nextN.nx + avgNy * nextN.ny;
         let miterDist = offsetDist;
-        if (Math.abs(dot) > 0.1) {
+
+        // Avoid huge spikes on sharp angles by checking dot product limit
+        if (dot > 0.2) {
             miterDist = offsetDist / dot;
+        } else {
+            // For very sharp angles, just use the offset to avoid shooting into space
+            miterDist = offsetDist;
         }
 
-        // Limit extreme miter joints
-        if (Math.abs(miterDist) > Math.abs(offsetDist * 5)) {
-            miterDist = offsetDist * Math.sign(miterDist);
+        // Hard cap the miter joint to 2.5x the offset distance to prevent artifacts 
+        // from Bezier curve approximation artifacts.
+        if (Math.abs(miterDist) > Math.abs(offsetDist * 2.5)) {
+            miterDist = offsetDist * 2.5 * Math.sign(miterDist);
         }
 
         result.push({
@@ -547,6 +567,7 @@ export function offsetPath(points, offsetDist) {
     } else {
         // for open path, just use the last normal
         let prevN = normals[n - 2];
+        if (!prevN) prevN = { nx: 0, ny: 0 };
         result.push({
             x: points[n - 1].x + prevN.nx * offsetDist,
             y: points[n - 1].y + prevN.ny * offsetDist
