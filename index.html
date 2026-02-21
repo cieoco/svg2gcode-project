@@ -59,8 +59,12 @@
                     <div class="toolpath-mode-selector"
                         style="margin-bottom: 10px; display: flex; gap: 15px; align-items: center;">
                         <span style="font-weight: 600; font-size: 0.9rem;">選擇線段刀路模式：</span>
+                        <label style="display: flex; align-items: center; gap: 5px; cursor: pointer; color: #9ca3af;">
+                            <input type="radio" name="toolpathMode" value="none" checked>
+                            <span>不加工 (None)</span>
+                        </label>
                         <label style="display: flex; align-items: center; gap: 5px; cursor: pointer; color: #3b82f6;">
-                            <input type="radio" name="toolpathMode" value="outside" checked>
+                            <input type="radio" name="toolpathMode" value="outside">
                             <span>銑線外 (Outside)</span>
                         </label>
                         <label style="display: flex; align-items: center; gap: 5px; cursor: pointer; color: #ef4444;">

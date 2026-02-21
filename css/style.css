@@ -197,6 +197,12 @@ body {
     cursor: pointer;
 }
 
+#previewSvg svg *.path-none {
+    stroke: #6b7280 !important;
+    /* Tailwind gray-500 */
+    opacity: 0.3 !important;
+}
+
 #previewSvg svg *.path-on-path {
     stroke: var(--primary) !important;
 }

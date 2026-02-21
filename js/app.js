@@ -131,7 +131,10 @@ function setupSvgInteractions(parts) {
         if (index < parts.length) {
             el.dataset.partId = parts[index].id;
             // Set default mode
-            if (!parts[index].toolpathMode) parts[index].toolpathMode = 'on-path';
+            if (!parts[index].toolpathMode) {
+                parts[index].toolpathMode = 'none';
+                el.classList.add('path-none');
+            }
 
             el.addEventListener('click', (e) => {
                 e.stopPropagation();
@@ -163,12 +166,19 @@ function setupSvgInteractions(parts) {
                     }
 
                     // Update CSS class
-                    el.classList.remove('path-on-path', 'path-outside', 'path-inside', 'path-drill');
+                    el.classList.remove('path-on-path', 'path-outside', 'path-inside', 'path-drill', 'path-none');
                     el.classList.add(`path-${selectedMode}`);
 
                     // Re-find index to log the correct new position
                     const newIndex = currentParts.findIndex(p => p.id === el.dataset.partId);
-                    log(`已將路徑 #${newIndex + 1} 設為 ${selectedMode === 'outside' ? '銑線外' : selectedMode === 'inside' ? '銑線內' : selectedMode === 'drill' ? '鑽孔' : '銑線上'}。`);
+
+                    let modeName = '不加工';
+                    if (selectedMode === 'outside') modeName = '銑線外';
+                    if (selectedMode === 'inside') modeName = '銑線內';
+                    if (selectedMode === 'drill') modeName = '鑽孔';
+                    if (selectedMode === 'on-path') modeName = '銑線上';
+
+                    log(`已將路徑 #${newIndex + 1} 設為 ${modeName}。`);
 
                     // Re-render toolpath list to update badges and order
                     renderToolpathList();
@@ -388,14 +398,15 @@ function renderToolpathList() {
         el.draggable = true;
         el.dataset.id = part.id;
 
-        let modeLabel = '線上 (On Path)';
+        let modeLabel = '不加工 (None)';
+        if (part.toolpathMode === 'on-path') modeLabel = '線上 (On Path)';
         if (part.toolpathMode === 'outside') modeLabel = '線外 (Outside)';
         if (part.toolpathMode === 'inside') modeLabel = '線內 (Inside)';
         if (part.toolpathMode === 'drill') modeLabel = '鑽孔 (Drill)';
 
         el.innerHTML = `
             <span><strong style="color:var(--text-muted)">#${index + 1}</strong> 路徑</span>
-            <span class="mode-badge ${part.toolpathMode || 'on-path'}">${modeLabel}</span>
+            <span class="mode-badge ${part.toolpathMode || 'none'}">${modeLabel}</span>
         `;
 
         el.addEventListener('dragstart', (e) => {

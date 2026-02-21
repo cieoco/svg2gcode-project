@@ -43,6 +43,14 @@ export function buildPartGcode(part, mfg) {
 
     // Handle toolpath modes
     const mode = part.toolpathMode || 'on-path';
+
+    // Support 'none' mode (do not generate geometry G-code for this part)
+    if (mode === 'none') {
+        const lines = [];
+        // Optional: you could push a comment if you want, but empty slice is cleaner
+        return lines;
+    }
+
     const offsetDist = mode === 'outside' ? (mfg.toolD / 2) : mode === 'inside' ? (-mfg.toolD / 2) : 0;
 
     // 1. Drill operation specifically selected by user 
