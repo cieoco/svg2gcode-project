@@ -59,13 +59,8 @@
                     <div class="toolpath-mode-selector"
                         style="margin-bottom: 10px; display: flex; gap: 15px; align-items: center;">
                         <span style="font-weight: 600; font-size: 0.9rem;">選擇線段刀路模式：</span>
-                        <label
-                            style="display: flex; align-items: center; gap: 5px; cursor: pointer; color: var(--text-main);">
-                            <input type="radio" name="toolpathMode" value="on-path" checked>
-                            <span>銑線上 (On Path)</span>
-                        </label>
                         <label style="display: flex; align-items: center; gap: 5px; cursor: pointer; color: #3b82f6;">
-                            <input type="radio" name="toolpathMode" value="outside">
+                            <input type="radio" name="toolpathMode" value="outside" checked>
                             <span>銑線外 (Outside)</span>
                         </label>
                         <label style="display: flex; align-items: center; gap: 5px; cursor: pointer; color: #ef4444;">
@@ -75,6 +70,11 @@
                         <label style="display: flex; align-items: center; gap: 5px; cursor: pointer; color: #f59e0b;">
                             <input type="radio" name="toolpathMode" value="drill">
                             <span>鑽孔 (Drill)</span>
+                        </label>
+                        <label
+                            style="display: flex; align-items: center; gap: 5px; cursor: pointer; color: var(--text-main);">
+                            <input type="radio" name="toolpathMode" value="on-path">
+                            <span>銑線上 (On Path)</span>
                         </label>
                     </div>
                     <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 10px;">
