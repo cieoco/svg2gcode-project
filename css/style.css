@@ -188,10 +188,37 @@ body {
 }
 
 #previewSvg svg * {
-    stroke: var(--primary) !important;
-    stroke-width: 0.3px !important;
+    stroke: var(--primary);
+    stroke-width: 0.3px;
     vector-effect: non-scaling-stroke;
     fill: none !important;
+    transition: stroke 0.2s;
+    cursor: pointer;
+}
+
+#previewSvg svg *.path-on-path {
+    stroke: var(--primary) !important;
+}
+
+#previewSvg svg *.path-outside {
+    stroke: #3b82f6 !important;
+    /* Blue */
+}
+
+#previewSvg svg *.path-inside {
+    stroke: #ef4444 !important;
+    /* Red */
+}
+
+#previewSvg svg *.path-drill {
+    stroke: #f59e0b !important;
+    /* Orange */
+    stroke-dasharray: 2, 2;
+}
+
+#previewSvg svg *:hover {
+    stroke-width: 1px !important;
+    opacity: 0.8;
 }
 
 /* Tabs */
@@ -273,6 +300,7 @@ body {
     flex: 1;
     height: 4px;
     -webkit-appearance: none;
+    appearance: none;
     background: var(--border);
     border-radius: 2px;
     outline: none;

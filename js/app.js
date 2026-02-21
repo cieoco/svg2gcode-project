@@ -100,12 +100,50 @@ function processFile(file) {
             log(`已從 SVG 成功解析出 ${currentParts.length} 個切削零件路徑。`);
             generateBtn.disabled = currentParts.length === 0;
 
+            // Make SVG elements interactive
+            setupSvgInteractions(currentParts);
+
         } catch (err) {
             log(`解析 SVG 時發生錯誤: ${err.message}`);
             generateBtn.disabled = true;
         }
     };
     reader.readAsText(file);
+}
+
+function setupSvgInteractions(parts) {
+    const svgEl = previewSvg.querySelector('svg');
+    if (!svgEl) return;
+
+    // Use querySelectorAll to get the paths in the same order as parsed
+    const shapes = ['path', 'rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon'];
+    const elements = svgEl.querySelectorAll(shapes.join(','));
+    
+    // Assign index and click listener
+    elements.forEach((el, index) => {
+        if (index < parts.length) {
+            el.dataset.partIndex = index;
+            // Set default mode
+            parts[index].toolpathMode = 'on-path';
+            
+            el.addEventListener('click', (e) => {
+                e.stopPropagation();
+                
+                // Get selected toolpath mode from radio buttons
+                const selectedModeRadio = document.querySelector('input[name="toolpathMode"]:checked');
+                const selectedMode = selectedModeRadio ? selectedModeRadio.value : 'on-path';
+                
+                // Update part data
+                parts[index].toolpathMode = selectedMode;
+                
+                // Update CSS class
+                el.classList.remove('path-on-path', 'path-outside', 'path-inside', 'path-drill');
+                el.classList.add(`path-${selectedMode}`);
+                
+                log(`已將 Part_${index + 1} 設為 ${selectedMode === 'outside' ? '銑線外' : selectedMode === 'inside' ? '銑線內' : selectedMode === 'drill' ? '鑽孔' : '銑線上'}。`);
+            });
+        }
+    });
 }
 
 function getMfgData() {

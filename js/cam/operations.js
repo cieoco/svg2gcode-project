@@ -459,3 +459,99 @@ export function profileTangentHullOps({
 
     return lines;
 }
+
+/**
+ * Mathematically offsets a polygon/path by a given distance.
+ * Positive offset moves points "outward" (right side of directed edge) assuming CCW polygon.
+ * Simple normal displacement algorithm (does not handle complex self-intersections or sharp corner clipping perfectly).
+ */
+export function offsetPath(points, offsetDist) {
+    if (!points || points.length < 2 || offsetDist === 0) return points;
+
+    const result = [];
+    const n = points.length;
+    // Check if closed
+    const isClosed = Math.abs(points[0].x - points[n - 1].x) < 0.001 && Math.abs(points[0].y - points[n - 1].y) < 0.001;
+
+    // Helper: get normal vector of segment (p1 -> p2)
+    const getNormal = (p1, p2) => {
+        let dx = p2.x - p1.x;
+        let dy = p2.y - p1.y;
+        let len = Math.hypot(dx, dy);
+        if (len === 0) return { nx: 0, ny: 0 };
+        // Perpendicular pointing to the "right"
+        // In screen space (y downwards), to expand a path (outside) you want right normal if path is CW.
+        // SVG paths are often CW for outer boundaries in screen space. 
+        // We'll use (ny, -nx) or (-ny, nx). 
+        // Let's use standard Right Hand Rule (-dy/len, dx/len)
+        return { nx: -dy / len, ny: dx / len };
+    };
+
+    // Calculate normals for each segment
+    const normals = [];
+    for (let i = 0; i < n - 1; i++) {
+        normals.push(getNormal(points[i], points[i + 1]));
+    }
+    if (isClosed) {
+        normals.push(normals[0]); // Last point matches first point
+    }
+
+    // Offset each point by averaging normals of adjacent segments
+    for (let i = 0; i < n - 1; i++) {
+        let prevN, nextN;
+        if (i === 0) {
+            prevN = isClosed ? normals[normals.length - 2] : normals[0];
+            nextN = normals[0];
+        } else {
+            prevN = normals[i - 1];
+            nextN = normals[i];
+        }
+
+        // Average normal
+        let avgNx = prevN.nx + nextN.nx;
+        let avgNy = prevN.ny + nextN.ny;
+        let len = Math.hypot(avgNx, avgNy);
+
+        // If normals cancel each other out (e.g. 180 degree turn), fallback to one of them
+        if (len < 0.001) {
+            avgNx = nextN.nx;
+            avgNy = nextN.ny;
+            len = Math.hypot(avgNx, avgNy);
+        }
+
+        avgNx /= len;
+        avgNy /= len;
+
+        // Apply offset (miter-like expansion, simplified)
+        // dot(avgN, N1) helps scale the offset for sharp corners
+        let dot = avgNx * nextN.nx + avgNy * nextN.ny;
+        let miterDist = offsetDist;
+        if (Math.abs(dot) > 0.1) {
+            miterDist = offsetDist / dot;
+        }
+
+        // Limit extreme miter joints
+        if (Math.abs(miterDist) > Math.abs(offsetDist * 5)) {
+            miterDist = offsetDist * Math.sign(miterDist);
+        }
+
+        result.push({
+            x: points[i].x + avgNx * miterDist,
+            y: points[i].y + avgNy * miterDist
+        });
+    }
+
+    // handle the last point
+    if (isClosed) {
+        result.push({ x: result[0].x, y: result[0].y });
+    } else {
+        // for open path, just use the last normal
+        let prevN = normals[n - 2];
+        result.push({
+            x: points[n - 1].x + prevN.nx * offsetDist,
+            y: points[n - 1].y + prevN.ny * offsetDist
+        });
+    }
+
+    return result;
+}

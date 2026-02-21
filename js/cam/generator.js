@@ -12,6 +12,7 @@ import {
     profileCircleOps,
     profilePathOps,
     profileTangentHullOps,
+    offsetPath
 } from './operations.js';
 
 /**
@@ -40,8 +41,32 @@ export function buildPartGcode(part, mfg) {
     if (part.barStyle === 'path' && part.points) labelL += ` (Points: ${part.points.length})`;
     lines.push(`(Part: ${part.id}, ${labelL}, style=${part.barStyle || 'rect'})`);
 
-    // 1. 孔加工
-    if (holeMode === "mill") {
+    // Handle toolpath modes
+    const mode = part.toolpathMode || 'on-path';
+    const offsetDist = mode === 'outside' ? (mfg.toolD / 2) : mode === 'inside' ? (-mfg.toolD / 2) : 0;
+
+    // 1. Drill operation specifically selected by user 
+    if (mode === 'drill') {
+        lines.push("(Drill selected point)");
+        // Calculate center of bounding box
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        if (part.points && part.points.length > 0) {
+            for (const pt of part.points) {
+                if (pt.x < minX) minX = pt.x;
+                if (pt.x > maxX) maxX = pt.x;
+                if (pt.y < minY) minY = pt.y;
+                if (pt.y > maxY) maxY = pt.y;
+            }
+            const cx = (minX + maxX) / 2;
+            const cy = (minY + maxY) / 2;
+            lines.push(...drillOps({ holes: [{ x: cx, y: cy }], safeZ, drillZ, feedZ }));
+        }
+        lines.push(...gcodeFooter({ safeZ, spindle, postProcessor }));
+        return lines.join("\n") + "\n";
+    }
+
+    // 1. 孔加工 (Legacy feature, if any)
+    if (holeMode === "mill" && part.holes && part.holes.length > 0) {
         lines.push("(Mill holes)");
         for (const h of part.holes) {
             const holeD = Number.isFinite(h.d) ? h.d : part.holeD;
@@ -58,7 +83,7 @@ export function buildPartGcode(part, mfg) {
                 })
             );
         }
-    } else {
+    } else if (part.holes && part.holes.length > 0) {
         lines.push(...drillOps({ holes: part.holes, safeZ, drillZ, feedZ }));
     }
 
@@ -103,19 +128,36 @@ export function buildPartGcode(part, mfg) {
             })
         );
     } else if (part.barStyle === 'rounded') {
+        const _rectPoints = [
+            { x: part.rect.x, y: part.rect.y },
+            { x: part.rect.x + part.rect.w, y: part.rect.y },
+            { x: part.rect.x + part.rect.w, y: part.rect.y + part.rect.h },
+            { x: part.rect.x, y: part.rect.y + part.rect.h },
+            { x: part.rect.x, y: part.rect.y }
+        ];
+        const offsetted = offsetDist !== 0 ? offsetPath(_rectPoints, offsetDist) : _rectPoints;
         lines.push(
-            ...profileRoundedRectOps({ rect: part.rect, safeZ, cutDepth, stepdown, feedXY, feedZ, tabWidth, tabCount, tabZ })
+            ...profilePathOps({ points: offsetted, safeZ, cutDepth, stepdown, feedXY, feedZ, tabWidth, tabCount, tabZ })
         );
     } else if (part.barStyle === 'path' && part.points) {
+        const offsetted = offsetDist !== 0 ? offsetPath(part.points, offsetDist) : part.points;
         lines.push(
             ...profilePathOps({
-                points: part.points,
+                points: offsetted,
                 safeZ, cutDepth, stepdown, feedXY, feedZ, tabWidth, tabCount, tabZ
             })
         );
     } else {
+        const _rectPoints = [
+            { x: part.rect.x, y: part.rect.y },
+            { x: part.rect.x + part.rect.w, y: part.rect.y },
+            { x: part.rect.x + part.rect.w, y: part.rect.y + part.rect.h },
+            { x: part.rect.x, y: part.rect.y + part.rect.h },
+            { x: part.rect.x, y: part.rect.y }
+        ];
+        const offsetted = offsetDist !== 0 ? offsetPath(_rectPoints, offsetDist) : _rectPoints;
         lines.push(
-            ...profileRectOps({ rect: part.rect, safeZ, cutDepth, stepdown, feedXY, feedZ, tabWidth, tabCount, tabZ })
+            ...profilePathOps({ points: offsetted, safeZ, cutDepth, stepdown, feedXY, feedZ, tabWidth, tabCount, tabZ })
         );
     }
 
