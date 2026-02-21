@@ -104,11 +104,37 @@ export function parseSVG(svgText) {
         throw new Error("Invalid SVG content.");
     }
 
-    // Parse Viewbox and Width/Height for scaling
-    let scaleX = 1;
-    let scaleY = 1;
-    let offsetX = 0;
-    let offsetY = 0;
+    // Detect SVG viewport units and compute a scale-to-mm factor.
+    // The browser's getPointAtLength() returns values in SVG user units.
+    // We need to know how many mm one SVG user unit represents.
+    let svgToMm = 1; // default: assume SVG units are already mm
+
+    const svgWidth = svgEl.getAttribute('width') || '';
+    const svgHeight = svgEl.getAttribute('height') || '';
+
+    // Helper: parse a dimension string like "15cm", "6in", "400px" into mm
+    const parseDimMm = (str) => {
+        const m = str.trim().match(/^([\d.]+)\s*(cm|mm|in|pt|px)?$/i);
+        if (!m) return null;
+        const val = parseFloat(m[1]);
+        const unit = (m[2] || 'px').toLowerCase();
+        const toMm = { mm: 1, cm: 10, in: 25.4, pt: 25.4 / 72, px: 25.4 / 96 };
+        return val * (toMm[unit] || 1);
+    };
+
+    const viewBox = svgEl.getAttribute('viewBox');
+    if (viewBox && svgWidth) {
+        const vbParts = viewBox.trim().split(/[\s,]+/).map(parseFloat);
+        const vbW = vbParts[2]; // viewBox width in user units
+        const physW = parseDimMm(svgWidth); // physical width in mm
+        if (vbW && physW) {
+            svgToMm = physW / vbW; // user-unit → mm
+        }
+    } else if (svgWidth) {
+        // No viewBox: treat width attribute value as direct mm/unit size
+        const physW = parseDimMm(svgWidth);
+        if (physW !== null) svgToMm = physW / parseFloat(svgWidth);
+    }
 
     // Convert primitives to paths
     const shapes = ['path', 'rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon'];
@@ -162,15 +188,17 @@ export function parseSVG(svgText) {
 
         // Sample points along the path
         const points = [];
-        // Use a finer resolution for accurate curve representation.
-        // 0.5mm step: gives ~2000 pts for a 1000mm path, well within range for smooth curves
-        const numSamples = Math.min(4000, Math.max(64, Math.ceil(length / 0.5)));
+        // length is in SVG user units; convert to mm for sample density calculation
+        const lengthMm = length * svgToMm;
+        // 0.5mm step for accurate curve representation; cap at 4000 pts
+        const numSamples = Math.min(4000, Math.max(64, Math.ceil(lengthMm / 0.5)));
         const step = length / numSamples;
 
         for (let i = 0; i <= numSamples; i++) {
             const rawPt = pathEl.getPointAtLength(i * step);
             const pt = applyMatrix(rawPt);
-            points.push({ x: pt.x, y: -pt.y }); // Y is flipped in CNC compared to SVG
+            // Convert from SVG user units to mm, flip Y for CNC coordinate system
+            points.push({ x: pt.x * svgToMm, y: -pt.y * svgToMm });
         }
 
         // Close path if needed
