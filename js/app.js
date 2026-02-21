@@ -148,13 +148,29 @@ function setupSvgInteractions(parts) {
                     // Update part data
                     currentParts[partIndex].toolpathMode = selectedMode;
 
+                    // Click-to-order logic: first clicked -> #1, second -> #2, etc.
+                    if (!currentParts[partIndex].listOrdered) {
+                        const [movedPart] = currentParts.splice(partIndex, 1);
+                        movedPart.listOrdered = true;
+
+                        // Insert after the last ordered part
+                        const insertIndex = currentParts.findIndex(p => !p.listOrdered);
+                        if (insertIndex === -1) {
+                            currentParts.push(movedPart); // all others are ordered, put at end
+                        } else {
+                            currentParts.splice(insertIndex, 0, movedPart);
+                        }
+                    }
+
                     // Update CSS class
                     el.classList.remove('path-on-path', 'path-outside', 'path-inside', 'path-drill');
                     el.classList.add(`path-${selectedMode}`);
 
-                    log(`已將路徑 #${partIndex + 1} 設為 ${selectedMode === 'outside' ? '銑線外' : selectedMode === 'inside' ? '銑線內' : selectedMode === 'drill' ? '鑽孔' : '銑線上'}。`);
+                    // Re-find index to log the correct new position
+                    const newIndex = currentParts.findIndex(p => p.id === el.dataset.partId);
+                    log(`已將路徑 #${newIndex + 1} 設為 ${selectedMode === 'outside' ? '銑線外' : selectedMode === 'inside' ? '銑線內' : selectedMode === 'drill' ? '鑽孔' : '銑線上'}。`);
 
-                    // Re-render toolpath list to update badges
+                    // Re-render toolpath list to update badges and order
                     renderToolpathList();
                 }
             });
