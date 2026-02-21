@@ -271,9 +271,14 @@ export function update3DToolpath(gcodeText, mfg) {
         boxMesh.position.set(cx, cy, -d / 2);
         toolpathGroup.add(boxMesh);
 
-        // Auto-frame camera
+        // Auto-frame camera to fit the bounding box
+        const diag = Math.sqrt(w * w + h * h);
+        // FOV-based distance: distance required so the diagonal fills ~70% of the vertical FOV 
+        const fovRad = (camera.fov || 50) * Math.PI / 180;
+        const camDist = (diag / 2) / Math.tan(fovRad / 2) * 1.2;
         controls.target.set(cx, cy, 0);
-        camera.position.set(cx, cy - Math.max(w, h), Math.max(w, h) * 0.8);
+        camera.position.set(cx, cy - camDist * 0.6, camDist * 0.8);
+        controls.update();
     }
 
     // Initialize the toolhead using the real tool diameter from CAM settings
