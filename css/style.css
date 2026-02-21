@@ -191,7 +191,8 @@ body {
     stroke: var(--primary);
     stroke-width: 0.3px;
     vector-effect: non-scaling-stroke;
-    fill: none !important;
+    fill: transparent !important;
+    pointer-events: all;
     transition: stroke 0.2s;
     cursor: pointer;
 }
