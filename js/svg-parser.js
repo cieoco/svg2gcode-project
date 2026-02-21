@@ -17,12 +17,34 @@ function cleanSVG(svgStr) {
 function primitiveToPath(el) {
     const tag = el.tagName.toLowerCase();
     switch (tag) {
-        case 'rect':
+        case 'rect': {
             const x = parseFloat(el.getAttribute('x')) || 0;
             const y = parseFloat(el.getAttribute('y')) || 0;
             const w = parseFloat(el.getAttribute('width')) || 0;
             const h = parseFloat(el.getAttribute('height')) || 0;
-            return `M ${x} ${y} H ${x + w} V ${y + h} H ${x} Z`;
+            let rx = parseFloat(el.getAttribute('rx')) || 0;
+            let ry = parseFloat(el.getAttribute('ry')) || 0;
+            // If only one is set, SVG spec says the other matches
+            if (!rx && ry) rx = ry;
+            if (!ry && rx) ry = rx;
+            // Clamp to half of dimensions
+            rx = Math.min(rx, w / 2);
+            ry = Math.min(ry, h / 2);
+            if (rx === 0 && ry === 0) {
+                // Sharp rectangle
+                return `M ${x} ${y} H ${x + w} V ${y + h} H ${x} Z`;
+            }
+            // Rounded rectangle using arc commands
+            return `M ${x + rx},${y}` +
+                ` H ${x + w - rx}` +
+                ` A ${rx},${ry} 0 0 1 ${x + w},${y + ry}` +
+                ` V ${y + h - ry}` +
+                ` A ${rx},${ry} 0 0 1 ${x + w - rx},${y + h}` +
+                ` H ${x + rx}` +
+                ` A ${rx},${ry} 0 0 1 ${x},${y + h - ry}` +
+                ` V ${y + ry}` +
+                ` A ${rx},${ry} 0 0 1 ${x + rx},${y} Z`;
+        }
 
         case 'circle':
             const cx = parseFloat(el.getAttribute('cx')) || 0;
