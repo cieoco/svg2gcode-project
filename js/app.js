@@ -97,11 +97,18 @@ function processFile(file) {
 
             // Parse to Parts
             currentParts = await parseSVG(svgContent);
+            currentParts.forEach((part, i) => {
+                part.id = 'part_' + Date.now() + '_' + i;
+            });
+
             log(`已從 SVG 成功解析出 ${currentParts.length} 個切削零件路徑。`);
             generateBtn.disabled = currentParts.length === 0;
 
             // Make SVG elements interactive
             setupSvgInteractions(currentParts);
+
+            // Render toolpath order list
+            renderToolpathList();
 
         } catch (err) {
             log(`解析 SVG 時發生錯誤: ${err.message}`);
@@ -122,9 +129,9 @@ function setupSvgInteractions(parts) {
     // Assign index and click listener
     elements.forEach((el, index) => {
         if (index < parts.length) {
-            el.dataset.partIndex = index;
+            el.dataset.partId = parts[index].id;
             // Set default mode
-            parts[index].toolpathMode = 'on-path';
+            if (!parts[index].toolpathMode) parts[index].toolpathMode = 'on-path';
 
             el.addEventListener('click', (e) => {
                 e.stopPropagation();
@@ -135,14 +142,21 @@ function setupSvgInteractions(parts) {
                 const selectedModeRadio = document.querySelector('input[name="toolpathMode"]:checked');
                 const selectedMode = selectedModeRadio ? selectedModeRadio.value : 'on-path';
 
-                // Update part data
-                parts[index].toolpathMode = selectedMode;
+                // Find matching part by ID
+                const partIndex = currentParts.findIndex(p => p.id === el.dataset.partId);
+                if (partIndex !== -1) {
+                    // Update part data
+                    currentParts[partIndex].toolpathMode = selectedMode;
 
-                // Update CSS class
-                el.classList.remove('path-on-path', 'path-outside', 'path-inside', 'path-drill');
-                el.classList.add(`path-${selectedMode}`);
+                    // Update CSS class
+                    el.classList.remove('path-on-path', 'path-outside', 'path-inside', 'path-drill');
+                    el.classList.add(`path-${selectedMode}`);
 
-                log(`已將 Part_${index + 1} 設為 ${selectedMode === 'outside' ? '銑線外' : selectedMode === 'inside' ? '銑線內' : selectedMode === 'drill' ? '鑽孔' : '銑線上'}。`);
+                    log(`已將路徑 #${partIndex + 1} 設為 ${selectedMode === 'outside' ? '銑線外' : selectedMode === 'inside' ? '銑線內' : selectedMode === 'drill' ? '鑽孔' : '銑線上'}。`);
+
+                    // Re-render toolpath list to update badges
+                    renderToolpathList();
+                }
             });
         }
     });
@@ -337,3 +351,90 @@ generateBtn.addEventListener('click', () => {
         log(`生成 G-code 時發生錯誤: ${err.message}`);
     }
 });
+
+// --- Toolpath Ordering Logic ---
+let draggedPartId = null;
+
+function renderToolpathList() {
+    const list = document.getElementById('toolpathList');
+    if (!list) return;
+
+    if (!currentParts || currentParts.length === 0) {
+        list.innerHTML = '<div style="padding: 10px; color: var(--text-muted); text-align: center; font-size: 0.85rem;">等待載入 SVG 檔案...</div>';
+        return;
+    }
+
+    list.innerHTML = '';
+
+    currentParts.forEach((part, index) => {
+        const el = document.createElement('div');
+        el.className = 'toolpath-item';
+        el.draggable = true;
+        el.dataset.id = part.id;
+
+        let modeLabel = '線上 (On Path)';
+        if (part.toolpathMode === 'outside') modeLabel = '線外 (Outside)';
+        if (part.toolpathMode === 'inside') modeLabel = '線內 (Inside)';
+        if (part.toolpathMode === 'drill') modeLabel = '鑽孔 (Drill)';
+
+        el.innerHTML = `
+            <span><strong style="color:var(--text-muted)">#${index + 1}</strong> 路徑</span>
+            <span class="mode-badge ${part.toolpathMode || 'on-path'}">${modeLabel}</span>
+        `;
+
+        el.addEventListener('dragstart', (e) => {
+            draggedPartId = part.id;
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', part.id);
+            setTimeout(() => el.classList.add('dragging'), 0);
+        });
+
+        el.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+
+            // Add a visual cue if needed here (e.g. margin or border on the dragged-over element)
+        });
+
+        el.addEventListener('drop', (e) => {
+            e.preventDefault();
+            if (draggedPartId && draggedPartId !== part.id) {
+                // Reorder currentParts
+                const fromIndex = currentParts.findIndex(p => p.id === draggedPartId);
+                const toIndex = currentParts.findIndex(p => p.id === part.id);
+
+                if (fromIndex !== -1 && toIndex !== -1) {
+                    const [movedPart] = currentParts.splice(fromIndex, 1);
+                    currentParts.splice(toIndex, 0, movedPart);
+                    // Rerender list
+                    renderToolpathList();
+                    log(`已調整加工順序：移至 #${toIndex + 1}。`);
+                }
+            }
+        });
+
+        el.addEventListener('dragend', () => {
+            el.classList.remove('dragging');
+            draggedPartId = null;
+        });
+
+        // Highlight corresponding SVG element on hover
+        el.addEventListener('mouseenter', () => {
+            const svgEl = previewSvg.querySelector(`svg [data-part-id="${part.id}"]`);
+            if (svgEl) {
+                svgEl.style.strokeWidth = '3px';
+                svgEl.style.opacity = '0.5';
+            }
+        });
+        el.addEventListener('mouseleave', () => {
+            const svgEl = previewSvg.querySelector(`svg [data-part-id="${part.id}"]`);
+            if (svgEl) {
+                svgEl.style.strokeWidth = '';
+                svgEl.style.opacity = '';
+            }
+        });
+
+        list.appendChild(el);
+    });
+}
+
