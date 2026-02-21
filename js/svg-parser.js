@@ -23,28 +23,28 @@ function primitiveToPath(el) {
             const w = parseFloat(el.getAttribute('width')) || 0;
             const h = parseFloat(el.getAttribute('height')) || 0;
             return `M ${x} ${y} H ${x + w} V ${y + h} H ${x} Z`;
-            
+
         case 'circle':
             const cx = parseFloat(el.getAttribute('cx')) || 0;
             const cy = parseFloat(el.getAttribute('cy')) || 0;
             const r = parseFloat(el.getAttribute('r')) || 0;
             // Approximate circle with bezier curves or simple 4-quadrant arcs
             return `M ${cx - r},${cy} a ${r},${r} 0 1,0 ${r * 2},0 a ${r},${r} 0 1,0 -${r * 2},0`;
-            
+
         case 'ellipse':
             const ecx = parseFloat(el.getAttribute('cx')) || 0;
             const ecy = parseFloat(el.getAttribute('cy')) || 0;
             const rx = parseFloat(el.getAttribute('rx')) || 0;
             const ry = parseFloat(el.getAttribute('ry')) || 0;
             return `M ${ecx - rx},${ecy} a ${rx},${ry} 0 1,0 ${rx * 2},0 a ${rx},${ry} 0 1,0 -${rx * 2},0`;
-            
+
         case 'line':
             const x1 = parseFloat(el.getAttribute('x1')) || 0;
             const y1 = parseFloat(el.getAttribute('y1')) || 0;
             const x2 = parseFloat(el.getAttribute('x2')) || 0;
             const y2 = parseFloat(el.getAttribute('y2')) || 0;
             return `M ${x1} ${y1} L ${x2} ${y2}`;
-            
+
         case 'polyline':
         case 'polygon':
             const points = el.getAttribute('points');
@@ -57,10 +57,10 @@ function primitiveToPath(el) {
             }
             if (tag === 'polygon') path += ' Z';
             return path;
-            
+
         case 'path':
             return el.getAttribute('d') || '';
-            
+
         default:
             return '';
     }
@@ -77,11 +77,11 @@ export function parseSVG(svgText) {
     const parser = new DOMParser();
     const doc = parser.parseFromString(cleanSVG(svgText), "image/svg+xml");
     const svgEl = doc.querySelector('svg');
-    
+
     if (!svgEl) {
         throw new Error("Invalid SVG content.");
     }
-    
+
     // Parse Viewbox and Width/Height for scaling
     let scaleX = 1;
     let scaleY = 1;
@@ -91,7 +91,7 @@ export function parseSVG(svgText) {
     // Convert primitives to paths
     const shapes = ['path', 'rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon'];
     const parts = [];
-    
+
     // Create a temporary hidden SVG container to leverage browser Path API
     const hiddenSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     hiddenSvg.style.display = 'none';
@@ -113,11 +113,14 @@ export function parseSVG(svgText) {
 
         // Sample points along the path
         const points = [];
-        // Adaptive sampling based on length
-        const step = Math.max(0.1, Math.min(1.0, length / 200)); 
-        
-        for (let i = 0; i <= length; i += step) {
-            const pt = pathEl.getPointAtLength(i);
+        // Use a finer resolution for accurate curve representation.
+        // Max 0.5mm step to capture even tight corners. This gives ~2000 pts for a 1000mm path.
+        // Cap minimum step at 0.1mm to avoid too many points on tiny paths.
+        const numSamples = Math.min(4000, Math.max(64, Math.ceil(length / 0.5)));
+        const step = length / numSamples;
+
+        for (let i = 0; i <= numSamples; i++) {
+            const pt = pathEl.getPointAtLength(i * step);
             points.push({ x: pt.x, y: -pt.y }); // Y is flipped in CNC compared to SVG
         }
 
@@ -125,7 +128,7 @@ export function parseSVG(svgText) {
         const first = points[0];
         const last = points[points.length - 1];
         if (Math.hypot(first.x - last.x, first.y - last.y) > 0.1 && d.toLowerCase().endsWith('z')) {
-           points.push({ x: first.x, y: first.y });
+            points.push({ x: first.x, y: first.y });
         }
 
         parts.push({
