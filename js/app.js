@@ -25,6 +25,17 @@ const lblTime = document.getElementById('lblTime');
 const lblProgress = document.getElementById('lblProgress');
 const speedSelect = document.getElementById('speedSelect');
 
+const rotateAngle = document.getElementById('rotateAngle');
+
+rotateAngle.addEventListener('input', (e) => {
+    const svgEl = previewSvg.querySelector('svg');
+    if (svgEl) {
+        svgEl.style.transform = `rotate(${e.target.value || 0}deg)`;
+        svgEl.style.transformOrigin = 'center center';
+        svgEl.style.transition = 'transform 0.2s ease-in-out';
+    }
+});
+
 let currentParts = null;
 
 // Init 3D View
@@ -316,8 +327,29 @@ generateBtn.addEventListener('click', () => {
 
     try {
         log("正在計算並生成 G-code...");
-        const files = buildAllGcodes(currentParts, mfg);
-        const info = generateMachiningInfo(mfg, currentParts.length);
+
+        // Deep copy parts to apply rotation without mutating the core data
+        let partsToProcess = JSON.parse(JSON.stringify(currentParts));
+        const angle = parseFloat(rotateAngle.value) || 0;
+
+        if (angle !== 0) {
+            // Negative angle because CSS rotate(Xdeg) is CW, but standard cartesian math is CCW
+            const rad = -angle * Math.PI / 180;
+            const cosA = Math.cos(rad);
+            const sinA = Math.sin(rad);
+
+            for (const p of partsToProcess) {
+                if (p.points) {
+                    p.points = p.points.map(pt => ({
+                        x: pt.x * cosA - pt.y * sinA,
+                        y: pt.x * sinA + pt.y * cosA
+                    }));
+                }
+            }
+        }
+
+        const files = buildAllGcodes(partsToProcess, mfg);
+        const info = generateMachiningInfo(mfg, partsToProcess.length);
 
         if (files.length > 0) {
             const mergedLines = [];
@@ -327,7 +359,7 @@ generateBtn.addEventListener('click', () => {
             let txt = mergedLines.join('\n');
 
             // --- Origin Offset ---
-            const extents = computePartsExtents(currentParts);
+            const extents = computePartsExtents(partsToProcess);
             let offsetX = 0, offsetY = 0, offsetZ = 0;
 
             if (extents.minX !== Infinity) {
