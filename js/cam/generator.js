@@ -4,8 +4,6 @@
  */
 
 import {
-    gcodeHeader,
-    gcodeFooter,
     drillOps,
     profileRectOps,
     profileRoundedRectOps,
@@ -72,8 +70,8 @@ export function buildPartGcode(part, mfg) {
             const cy = (minY + maxY) / 2;
             lines.push(...drillOps({ holes: [{ x: cx, y: cy }], safeZ, drillZ, feedZ }));
         }
-        lines.push(...gcodeFooter({ safeZ, spindle, postProcessor }));
-        return lines.join("\n") + "\n";
+
+        return lines.join("\r\n") + "\r\n";
     }
 
     // 1. 孔加工 (Legacy feature, if any)
