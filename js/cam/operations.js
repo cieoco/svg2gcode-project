@@ -17,6 +17,7 @@ export function gcodeHeader({ safeZ, spindle, postProcessor }) {
     lines.push("G90  (ABSOLUTE)");
     lines.push("G17  (XY PLANE)");
     lines.push("G94  (FEED PER MINUTE)");
+    lines.push("G64  (CONSTANT VELOCITY)");
     if (post === 'mach3') {
         lines.push("G40  (CUTTER COMP OFF)");
         lines.push("G49  (TOOL LENGTH COMP OFF)");
@@ -43,11 +44,16 @@ export function gcodeFooter({ safeZ, spindle, postProcessor }) {
 export function drillOps({ holes, safeZ, drillZ, feedZ }) {
     const lines = [];
     lines.push("(DRILL HOLES)");
+    let first = true;
     for (const h of holes) {
-        lines.push(`G0 Z${fmt(safeZ)}`);
+        // Enforce safe Z explicitly only before the very first hole to ensure clearance
+        if (first) {
+            lines.push(`G0 Z${fmt(safeZ)}`);
+            first = false;
+        }
         lines.push(`G0 X${fmt(h.x)} Y${fmt(h.y)}`);
-        lines.push(`G1 Z${fmt(drillZ)} F${fmt(feedZ)}`);
-        lines.push(`G0 Z${fmt(safeZ)}`);
+        lines.push(`G1 Z${fmt(drillZ)} F${fmt(feedZ)}`); // drill down
+        lines.push(`G0 Z${fmt(safeZ)}`); // lift up to safe Z
     }
     return lines;
 }
