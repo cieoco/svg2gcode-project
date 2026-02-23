@@ -257,7 +257,7 @@ export function update3DToolpath(gcodeText, mfg) {
 
     // Render stock material box
     if (minX !== Infinity && maxX !== -Infinity && minY !== Infinity && maxY !== -Infinity) {
-        const margin = 10;
+        const margin = mfg.materialMargin !== undefined ? mfg.materialMargin : 4;
         const w = (maxX - minX) + margin * 2;
         const h = (maxY - minY) + margin * 2;
         const d = (mfg.thickness || 3) + 0.1;

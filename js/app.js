@@ -261,6 +261,7 @@ function getMfgData() {
     return {
         safeZ: parseFloat(document.getElementById('safeZ').value) || 5,
         thickness: parseFloat(document.getElementById('thickness').value) || 3,
+        materialMargin: parseFloat(document.getElementById('materialMargin').value) || 4,
         overcut: parseFloat(document.getElementById('overcut').value) || 0.5,
         stepdown: parseFloat(document.getElementById('stepdown').value) || 1,
         feedXY: parseFloat(document.getElementById('feedXY').value) || 1000,
