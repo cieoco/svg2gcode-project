@@ -38,7 +38,7 @@ export function buildPartGcode(part, mfg) {
 
     // 註解說明
     let labelL = part.L !== undefined ? `L=${part.L.toFixed(2)}mm` : `W=${part.width}, H=${part.height || part.diameter}`;
-    if (part.barStyle === 'path' && part.points) labelL += ` (Points: ${part.points.length})`;
+    if (part.barStyle === 'path' && part.points) labelL += ` [Points: ${part.points.length}]`;
     lines.push(`(Part: ${part.id}, ${labelL}, style=${part.barStyle || 'rect'})`);
 
     // Handle toolpath modes
