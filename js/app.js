@@ -257,8 +257,40 @@ function setupSvgInteractions(parts) {
 // Global flag to prevent click after drag
 let isDraggingSvg = false;
 
+// Helper: Save current settings to localStorage
+function saveMfgData(mfg) {
+    try {
+        localStorage.setItem('svg2gcode_settings', JSON.stringify(mfg));
+    } catch (e) {
+        console.warn('Could not save settings to localStorage', e);
+    }
+}
+
+// Helper: Load settings from localStorage and populate UI
+function loadMfgData() {
+    try {
+        const saved = localStorage.getItem('svg2gcode_settings');
+        if (saved) {
+            const mfg = JSON.parse(saved);
+            if (mfg.safeZ !== undefined) document.getElementById('safeZ').value = mfg.safeZ;
+            if (mfg.thickness !== undefined) document.getElementById('thickness').value = mfg.thickness;
+            if (mfg.materialMargin !== undefined) document.getElementById('materialMargin').value = mfg.materialMargin;
+            if (mfg.overcut !== undefined) document.getElementById('overcut').value = mfg.overcut;
+            if (mfg.stepdown !== undefined) document.getElementById('stepdown').value = mfg.stepdown;
+            if (mfg.feedXY !== undefined) document.getElementById('feedXY').value = mfg.feedXY;
+            if (mfg.feedZ !== undefined) document.getElementById('feedZ').value = mfg.feedZ;
+            if (mfg.spindle !== undefined) document.getElementById('spindle').value = mfg.spindle;
+            if (mfg.toolD !== undefined) document.getElementById('toolD').value = mfg.toolD;
+            if (mfg.postProcessor !== undefined) document.getElementById('postProcessor').value = mfg.postProcessor;
+            if (mfg.originMode !== undefined) document.getElementById('originMode').value = mfg.originMode;
+        }
+    } catch (e) {
+        console.warn('Could not load settings from localStorage', e);
+    }
+}
+
 function getMfgData() {
-    return {
+    const mfg = {
         safeZ: parseFloat(document.getElementById('safeZ').value) || 5,
         thickness: parseFloat(document.getElementById('thickness').value) || 3,
         materialMargin: parseFloat(document.getElementById('materialMargin').value) || 4,
@@ -270,11 +302,14 @@ function getMfgData() {
         toolD: parseFloat(document.getElementById('toolD').value) || 3.175,
         postProcessor: document.getElementById('postProcessor').value || 'grbl',
         originMode: document.getElementById('originMode').value || 'top-bottomleft',
-        holeMode: 'drill',
+
+        // Hardcode bridge/tab off for now until UI is added
         tabThickness: 0,
         tabWidth: 0,
         tabCount: 0
     };
+    saveMfgData(mfg);
+    return mfg;
 }
 
 /**
@@ -498,3 +533,16 @@ function renderToolpathList() {
     });
 }
 
+// --- Initialization ---
+document.addEventListener('DOMContentLoaded', () => {
+    // Restore saved settings on initial load
+    loadMfgData();
+
+    // Listen to changes on all settings inputs and save automatically
+    const settingInputs = document.querySelectorAll('.settings-section input, .settings-section select');
+    settingInputs.forEach(input => {
+        input.addEventListener('change', () => {
+            getMfgData(); // calling this automatically triggers saveMfgData
+        });
+    });
+});
