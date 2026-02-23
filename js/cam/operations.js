@@ -335,13 +335,13 @@ export function profilePathOps({
         zLevels.push(-Math.min(i * sd, total));
     }
 
-    // --- Optimize: simplify + arc fitting ---
+    // --- Optimize: simplify + merge collinear lines ---
     const moves = optimizePath(points, {
         simplifyTolerance: 0.005,
         arcTolerance: 0.02,
         minArcRadius: 0.5,
         maxArcRadius: 50000,
-        enableArcFitting: true,
+        enableArcFitting: false,
     });
 
     if (!moves || moves.length === 0) return [];
