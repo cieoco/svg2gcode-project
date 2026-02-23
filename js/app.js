@@ -416,6 +416,15 @@ generateBtn.addEventListener('click', () => {
 
             txt = applyGcodeOffset(txt, offsetX, offsetY, offsetZ);
 
+            // Mach3 has ancient bugs where letters like 'O' (program number) inside comments
+            // cause "Bad character used" errors. E.g. (DRILL HOLES) -> O followed by L.
+            // Safest fallback is to strip all comments for Mach3.
+            if (mfg.postProcessor === 'mach3') {
+                txt = txt.split(/\r?\n/)
+                    .filter(line => !line.trim().startsWith('('))
+                    .join('\r\n');
+            }
+
             // Update 3D Viewer
             update3DToolpath(txt, mfg);
 
