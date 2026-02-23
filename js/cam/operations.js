@@ -338,9 +338,9 @@ export function profilePathOps({
     // --- Optimize: simplify + arc fitting ---
     const moves = optimizePath(points, {
         simplifyTolerance: 0.005,
-        arcTolerance: 0.01,
+        arcTolerance: 0.02,
         minArcRadius: 0.5,
-        maxArcRadius: 100000,
+        maxArcRadius: 50000,
         enableArcFitting: true,
     });
 
