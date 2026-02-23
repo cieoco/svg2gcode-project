@@ -34,7 +34,6 @@ export function buildPartGcode(part, mfg) {
     const tabZ = tabEnabled ? -(thickness - tabThickness) : NaN;
 
     const lines = [];
-    lines.push(...gcodeHeader({ safeZ, spindle, postProcessor }));
 
     // 註解說明
     let labelL = part.L !== undefined ? `L ${part.L.toFixed(2)}MM` : `W ${part.width} H ${part.height || part.diameter}`;
@@ -175,7 +174,6 @@ export function buildPartGcode(part, mfg) {
         );
     }
 
-    lines.push(...gcodeFooter({ safeZ, spindle, postProcessor }));
     return lines.join("\r\n") + "\r\n";
 }
 

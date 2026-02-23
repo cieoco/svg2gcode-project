@@ -4,6 +4,7 @@
 
 import { parseSVG } from './svg-parser.js';
 import { buildAllGcodes, generateMachiningInfo } from './cam/generator.js';
+import { gcodeHeader, gcodeFooter } from './cam/operations.js';
 import { init3DViewer, update3DToolpath, linkAnimationUI } from './viewer3d.js';
 
 // Elements
@@ -394,7 +395,14 @@ generateBtn.addEventListener('click', () => {
             // Use strict ASCII uppercase and avoid local date strings which might contain Chinese characters
             const simpleDate = new Date().toISOString().split('T')[0];
             mergedLines.push(`(SVG TO GCODE EXPORT ${simpleDate})`);
+
+            // Add global header
+            mergedLines.push(...gcodeHeader(mfg));
+
             files.forEach(f => mergedLines.push(f.text));
+
+            // Add global footer
+            mergedLines.push(...gcodeFooter(mfg));
 
             let txt = mergedLines.join('\r\n');
 
