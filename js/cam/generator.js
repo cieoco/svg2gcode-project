@@ -37,9 +37,13 @@ export function buildPartGcode(part, mfg) {
     lines.push(...gcodeHeader({ safeZ, spindle, postProcessor }));
 
     // 註解說明
-    let labelL = part.L !== undefined ? `L=${part.L.toFixed(2)}mm` : `W=${part.width}, H=${part.height || part.diameter}`;
-    if (part.barStyle === 'path' && part.points) labelL += ` [Points: ${part.points.length}]`;
-    lines.push(`(Part: ${part.id}, ${labelL}, style=${part.barStyle || 'rect'})`);
+    let labelL = part.L !== undefined ? `L ${part.L.toFixed(2)}MM` : `W ${part.width} H ${part.height || part.diameter}`;
+    if (part.barStyle === 'path' && part.points) labelL += ` PTS ${part.points.length}`;
+
+    // Mach3 parsing is aggressive: uppercase only, no underscores, no equals signs
+    const safeId = part.id ? part.id.toUpperCase().replace(/_/g, '') : 'UNKNOWN';
+    const safeStyle = part.barStyle ? part.barStyle.toUpperCase() : 'RECT';
+    lines.push(`(PART ${safeId} ${labelL} STYLE ${safeStyle})`);
 
     // Handle toolpath modes
     const mode = part.toolpathMode || 'on-path';
@@ -55,7 +59,7 @@ export function buildPartGcode(part, mfg) {
 
     // 1. Drill operation specifically selected by user 
     if (mode === 'drill') {
-        lines.push("(Drill selected point)");
+        lines.push("(DRILL SELECTED POINT)");
         // Calculate center of bounding box
         let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
         if (part.points && part.points.length > 0) {
@@ -75,7 +79,7 @@ export function buildPartGcode(part, mfg) {
 
     // 1. 孔加工 (Legacy feature, if any)
     if (holeMode === "mill" && part.holes && part.holes.length > 0) {
-        lines.push("[Mill holes]");
+        lines.push("(MILL HOLES)");
         for (const h of part.holes) {
             const holeD = Number.isFinite(h.d) ? h.d : part.holeD;
             lines.push(
@@ -97,7 +101,7 @@ export function buildPartGcode(part, mfg) {
 
     // 1.5 導軌槽 (Slots)
     if (part.slots) {
-        lines.push("[Profile internal slots]");
+        lines.push("(PROFILE INTERNAL SLOTS)");
         for (const slot of part.slots) {
             lines.push(
                 ...profileRoundedRectOps({
@@ -109,7 +113,7 @@ export function buildPartGcode(part, mfg) {
     }
 
     if (part.useOutlineForGcode && part.innerOutline && part.innerOutline.length >= 2) {
-        lines.push("[Profile inner outline]");
+        lines.push("(PROFILE INNER OUTLINE)");
         lines.push(
             ...profileTangentHullOps({
                 circles: part.innerOutline,
@@ -119,7 +123,7 @@ export function buildPartGcode(part, mfg) {
     }
 
     if (part.useOutlineForGcode && part.outline && part.outline.length >= 2) {
-        lines.push("[Profile outline]");
+        lines.push("(PROFILE OUTLINE)");
         lines.push(
             ...profileTangentHullOps({
                 circles: part.outline,
@@ -129,7 +133,7 @@ export function buildPartGcode(part, mfg) {
     } else if (part.barStyle === 'disk') {
         const cx = part.rect ? (part.rect.x + part.rect.w / 2) : 0;
         const cy = part.rect ? (part.rect.y + part.rect.h / 2) : 0;
-        lines.push("[Profile disk outline]");
+        lines.push("(PROFILE DISK OUTLINE)");
         lines.push(
             ...profileCircleOps({
                 cx, cy,
@@ -172,7 +176,7 @@ export function buildPartGcode(part, mfg) {
     }
 
     lines.push(...gcodeFooter({ safeZ, spindle, postProcessor }));
-    return lines.join("\n") + "\n";
+    return lines.join("\r\n") + "\r\n";
 }
 
 /**

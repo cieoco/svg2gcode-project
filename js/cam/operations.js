@@ -12,15 +12,15 @@ function normalizePostProcessor(postProcessor) {
 export function gcodeHeader({ safeZ, spindle, postProcessor }) {
     const lines = [];
     const post = normalizePostProcessor(postProcessor);
-    lines.push(`(MVP 4-bar parts, ${post === 'mach3' ? 'MACH3' : 'GRBL'})`);
-    lines.push("G21  (mm)");
-    lines.push("G90  (absolute)");
-    lines.push("G17  (XY plane)");
-    lines.push("G94  (feed per minute)");
+    lines.push(`(MVP 4-BAR PARTS, ${post === 'mach3' ? 'MACH3' : 'GRBL'})`);
+    lines.push("G21  (MM)");
+    lines.push("G90  (ABSOLUTE)");
+    lines.push("G17  (XY PLANE)");
+    lines.push("G94  (FEED PER MINUTE)");
     if (post === 'mach3') {
-        lines.push("G40  (cutter comp off)");
-        lines.push("G49  (tool length comp off)");
-        lines.push("G80  (cancel canned cycles)");
+        lines.push("G40  (CUTTER COMP OFF)");
+        lines.push("G49  (TOOL LENGTH COMP OFF)");
+        lines.push("G80  (CANCEL CANNED CYCLES)");
     }
     lines.push(`G0 Z${fmt(safeZ)}`);
     if (Number.isFinite(spindle) && spindle > 0) {
@@ -42,7 +42,7 @@ export function gcodeFooter({ safeZ, spindle, postProcessor }) {
 
 export function drillOps({ holes, safeZ, drillZ, feedZ }) {
     const lines = [];
-    lines.push("[Drill holes]");
+    lines.push("(Drill holes)");
     for (const h of holes) {
         lines.push(`G0 Z${fmt(safeZ)}`);
         lines.push(`G0 X${fmt(h.x)} Y${fmt(h.y)}`);

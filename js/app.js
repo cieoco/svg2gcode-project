@@ -337,10 +337,12 @@ function computePartsExtents(parts) {
 function applyGcodeOffset(gcodeText, offsetX, offsetY, offsetZ) {
     if (offsetX === 0 && offsetY === 0 && offsetZ === 0) return gcodeText;
 
-    return gcodeText.split('\n').map(line => {
+    return gcodeText.split(/\r?\n/).map(line => {
+        if (!line.trim()) return '';
         // Skip comments, non-coordinate lines
-        if (line.startsWith('(') || line.startsWith('%') ||
-            line.startsWith('M') || line.startsWith('G20') || line.startsWith('G21')) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith('(') || trimmed.startsWith('%') ||
+            trimmed.startsWith('M') || trimmed.startsWith('G20') || trimmed.startsWith('G21')) {
             return line;
         }
         if (!/[XYZ]/.test(line)) return line;
@@ -352,7 +354,7 @@ function applyGcodeOffset(gcodeText, offsetX, offsetY, offsetZ) {
             if (axis === 'Z') return `Z${(v + offsetZ).toFixed(4)}`;
             return match;
         });
-    }).join('\n');
+    }).filter(l => l !== '').join('\r\n');
 }
 
 // Generate G-Code
@@ -389,10 +391,12 @@ generateBtn.addEventListener('click', () => {
 
         if (files.length > 0) {
             const mergedLines = [];
-            mergedLines.push(`(SVG to GCODE Export - ${new Date().toLocaleString()})`);
+            // Use strict ASCII uppercase and avoid local date strings which might contain Chinese characters
+            const simpleDate = new Date().toISOString().split('T')[0];
+            mergedLines.push(`(SVG TO GCODE EXPORT ${simpleDate})`);
             files.forEach(f => mergedLines.push(f.text));
 
-            let txt = mergedLines.join('\n');
+            let txt = mergedLines.join('\r\n');
 
             // --- Origin Offset ---
             const extents = computePartsExtents(partsToProcess);
