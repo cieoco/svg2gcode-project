@@ -421,7 +421,8 @@ generateBtn.addEventListener('click', () => {
             // Safest fallback is to strip all comments for Mach3.
             if (mfg.postProcessor === 'mach3') {
                 txt = txt.split(/\r?\n/)
-                    .filter(line => !line.trim().startsWith('('))
+                    .map(line => line.replace(/\([^)]*\)/g, '').trim()) // Remove any (...) and trim spaces
+                    .filter(line => line !== '') // Remove resulting empty lines
                     .join('\r\n');
             }
 
