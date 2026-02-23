@@ -75,7 +75,7 @@ export function buildPartGcode(part, mfg) {
 
     // 1. 孔加工 (Legacy feature, if any)
     if (holeMode === "mill" && part.holes && part.holes.length > 0) {
-        lines.push("(Mill holes)");
+        lines.push("[Mill holes]");
         for (const h of part.holes) {
             const holeD = Number.isFinite(h.d) ? h.d : part.holeD;
             lines.push(
@@ -97,7 +97,7 @@ export function buildPartGcode(part, mfg) {
 
     // 1.5 導軌槽 (Slots)
     if (part.slots) {
-        lines.push("(Profile internal slots)");
+        lines.push("[Profile internal slots]");
         for (const slot of part.slots) {
             lines.push(
                 ...profileRoundedRectOps({
@@ -109,7 +109,7 @@ export function buildPartGcode(part, mfg) {
     }
 
     if (part.useOutlineForGcode && part.innerOutline && part.innerOutline.length >= 2) {
-        lines.push("(Profile inner outline)");
+        lines.push("[Profile inner outline]");
         lines.push(
             ...profileTangentHullOps({
                 circles: part.innerOutline,
@@ -119,6 +119,7 @@ export function buildPartGcode(part, mfg) {
     }
 
     if (part.useOutlineForGcode && part.outline && part.outline.length >= 2) {
+        lines.push("[Profile outline]");
         lines.push(
             ...profileTangentHullOps({
                 circles: part.outline,
@@ -128,6 +129,7 @@ export function buildPartGcode(part, mfg) {
     } else if (part.barStyle === 'disk') {
         const cx = part.rect ? (part.rect.x + part.rect.w / 2) : 0;
         const cy = part.rect ? (part.rect.y + part.rect.h / 2) : 0;
+        lines.push("[Profile disk outline]");
         lines.push(
             ...profileCircleOps({
                 cx, cy,
