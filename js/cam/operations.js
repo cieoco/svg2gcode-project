@@ -311,8 +311,101 @@ export function profileCircleOps({
     return lines;
 }
 
+/**
+ * Simplify runs of consecutive line moves using Douglas-Peucker,
+ * then merge collinear lines. Arc moves pass through unchanged.
+ */
+function simplifyLineMoves(moves) {
+    const result = [];
+    let lineRun = []; // collect consecutive line moves
+
+    const flushLineRun = () => {
+        if (lineRun.length === 0) return;
+        // Build points from line run
+        const pts = [lineRun[0].from];
+        for (const m of lineRun) pts.push(m.to);
+
+        // Douglas-Peucker simplification
+        const simplified = douglasPuckerSimplify(pts, 0.005);
+
+        // Merge collinear
+        const merged = mergeCollinear(simplified);
+
+        // Convert back to moves
+        for (let i = 0; i < merged.length - 1; i++) {
+            result.push({ type: 'line', from: merged[i], to: merged[i + 1] });
+        }
+        lineRun = [];
+    };
+
+    for (const m of moves) {
+        if (m.type === 'arc') {
+            flushLineRun();
+            result.push(m);
+        } else {
+            lineRun.push(m);
+        }
+    }
+    flushLineRun();
+    return result;
+}
+
+/**
+ * Douglas-Peucker polyline simplification (inline, no external dep)
+ */
+function douglasPuckerSimplify(pts, tolerance) {
+    if (pts.length <= 2) return pts;
+
+    let maxDist = 0, maxIdx = 0;
+    const first = pts[0], last = pts[pts.length - 1];
+    const dx = last.x - first.x, dy = last.y - first.y;
+    const lenSq = dx * dx + dy * dy;
+
+    for (let i = 1; i < pts.length - 1; i++) {
+        let dist;
+        if (lenSq === 0) {
+            dist = Math.hypot(pts[i].x - first.x, pts[i].y - first.y);
+        } else {
+            const t = Math.max(0, Math.min(1, ((pts[i].x - first.x) * dx + (pts[i].y - first.y) * dy) / lenSq));
+            const px = first.x + t * dx, py = first.y + t * dy;
+            dist = Math.hypot(pts[i].x - px, pts[i].y - py);
+        }
+        if (dist > maxDist) { maxDist = dist; maxIdx = i; }
+    }
+
+    if (maxDist > tolerance) {
+        const left = douglasPuckerSimplify(pts.slice(0, maxIdx + 1), tolerance);
+        const right = douglasPuckerSimplify(pts.slice(maxIdx), tolerance);
+        return left.slice(0, -1).concat(right);
+    }
+    return [first, last];
+}
+
+/**
+ * Merge collinear consecutive segments
+ */
+function mergeCollinear(pts) {
+    if (pts.length <= 2) return pts;
+    const result = [pts[0]];
+    for (let i = 1; i < pts.length - 1; i++) {
+        const prev = result[result.length - 1];
+        const curr = pts[i];
+        const next = pts[i + 1];
+        // Cross product to check collinearity
+        const cross = (curr.x - prev.x) * (next.y - prev.y) - (curr.y - prev.y) * (next.x - prev.x);
+        const segLen = Math.hypot(next.x - prev.x, next.y - prev.y);
+        if (segLen > 0 && Math.abs(cross) / segLen > 0.001) {
+            result.push(curr);
+        }
+    }
+    result.push(pts[pts.length - 1]);
+    return result;
+}
+
 export function profilePathOps({
     points,
+    moves: svgMoves,
+    startPoint,
     safeZ,
     cutDepth,
     stepdown,
@@ -322,7 +415,7 @@ export function profilePathOps({
     tabCount,
     tabZ
 }) {
-    if (!points || points.length < 2) return [];
+    if ((!points || points.length < 2) && (!svgMoves || svgMoves.length === 0)) return [];
 
     const lines = [];
     lines.push("(Profile arbitrary path)");
@@ -335,14 +428,47 @@ export function profilePathOps({
         zLevels.push(-Math.min(i * sd, total));
     }
 
-    // --- Optimize: simplify + merge collinear lines ---
-    const moves = optimizePath(points, {
-        simplifyTolerance: 0.005,
-        arcTolerance: 0.02,
-        minArcRadius: 0.5,
-        maxArcRadius: 50000,
-        enableArcFitting: false,
-    });
+    // --- Build moves array ---
+    // Strategy B: if svgMoves exist, convert to {from, to, ...} format
+    //             and simplify only line segments (arcs pass through unchanged)
+    let moves;
+    if (svgMoves && svgMoves.length > 0 && startPoint) {
+        // Convert svgMoves to moves with from/to pairs
+        moves = [];
+        let cur = { x: startPoint.x, y: startPoint.y };
+        for (const sm of svgMoves) {
+            if (sm.type === 'arc') {
+                moves.push({
+                    type: 'arc',
+                    from: { ...cur },
+                    to: { ...sm.to },
+                    center: { ...sm.center },
+                    radius: sm.radius,
+                    clockwise: sm.clockwise
+                });
+            } else {
+                moves.push({
+                    type: 'line',
+                    from: { ...cur },
+                    to: { ...sm.to }
+                });
+            }
+            cur = { x: sm.to.x, y: sm.to.y };
+        }
+
+        // Simplify consecutive line segments (skip arcs)
+        // Collect runs of lines, apply Douglas-Peucker, then merge collinear
+        moves = simplifyLineMoves(moves);
+    } else {
+        // Fallback: old path from points only
+        moves = optimizePath(points, {
+            simplifyTolerance: 0.005,
+            arcTolerance: 0.02,
+            minArcRadius: 0.5,
+            maxArcRadius: 50000,
+            enableArcFitting: false,
+        });
+    }
 
     if (!moves || moves.length === 0) return [];
 
