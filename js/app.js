@@ -376,13 +376,25 @@ generateBtn.addEventListener('click', () => {
             const rad = -angle * Math.PI / 180;
             const cosA = Math.cos(rad);
             const sinA = Math.sin(rad);
+            const rotatePt = (pt) => ({
+                x: pt.x * cosA - pt.y * sinA,
+                y: pt.x * sinA + pt.y * cosA
+            });
 
             for (const p of partsToProcess) {
                 if (p.points) {
-                    p.points = p.points.map(pt => ({
-                        x: pt.x * cosA - pt.y * sinA,
-                        y: pt.x * sinA + pt.y * cosA
-                    }));
+                    p.points = p.points.map(rotatePt);
+                }
+                if (p.startPoint) {
+                    p.startPoint = rotatePt(p.startPoint);
+                }
+                if (p.moves) {
+                    p.moves = p.moves.map(m => {
+                        const nm = { ...m };
+                        if (m.to) nm.to = rotatePt(m.to);
+                        if (m.center) nm.center = rotatePt(m.center);
+                        return nm;
+                    });
                 }
             }
         }

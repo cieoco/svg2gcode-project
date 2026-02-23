@@ -493,6 +493,50 @@ function parseDAttribute(d, svgToMm) {
     return { startX, startY, moves };
 }
 
+/**
+ * Build a polyline point list from typed moves.
+ * This is used by legacy point-only code paths (offset, extents, etc.).
+ * Arc moves are sampled so circles/rounded corners do not collapse to endpoints.
+ */
+function flattenMovesToPoints(startPoint, moves, stepMm = 0.5) {
+    const points = [{ x: startPoint.x, y: startPoint.y }];
+    let cur = { x: startPoint.x, y: startPoint.y };
+
+    const pushPoint = (pt) => {
+        const last = points[points.length - 1];
+        if (!last || Math.hypot(last.x - pt.x, last.y - pt.y) > 1e-6) {
+            points.push({ x: pt.x, y: pt.y });
+        }
+    };
+
+    for (const move of moves) {
+        if (move.type === 'arc' && move.center && Number.isFinite(move.radius) && move.radius > 1e-9) {
+            const cx = move.center.x;
+            const cy = move.center.y;
+            const r = move.radius;
+            const a1 = Math.atan2(cur.y - cy, cur.x - cx);
+            const a2 = Math.atan2(move.to.y - cy, move.to.x - cx);
+            let sweep = move.clockwise ? (a1 - a2) : (a2 - a1);
+            if (sweep < 0) sweep += Math.PI * 2;
+            const segCount = Math.max(2, Math.min(720, Math.ceil((r * sweep) / stepMm)));
+            const dir = move.clockwise ? -1 : 1;
+
+            for (let i = 1; i <= segCount; i++) {
+                const t = i / segCount;
+                const a = a1 + dir * sweep * t;
+                pushPoint({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) });
+            }
+            // Snap last sampled point to exact move endpoint to avoid drift.
+            points[points.length - 1] = { x: move.to.x, y: move.to.y };
+        } else {
+            pushPoint(move.to);
+        }
+        cur = { x: move.to.x, y: move.to.y };
+    }
+
+    return points;
+}
+
 
 /**
  * Extracts geometry from SVG content.
@@ -611,11 +655,9 @@ export function parseSVG(svgText) {
 
         const transformedMoves = parsed.moves.map(transformMove);
 
-        // Build backward-compatible `points` array from moves
-        const points = [startMm];
-        for (const m of transformedMoves) {
-            points.push(m.to);
-        }
+        // Build backward-compatible `points` array from moves.
+        // Important: sample arcs so offset paths preserve rounded geometry.
+        const points = flattenMovesToPoints(startMm, transformedMoves, 0.5);
 
         parts.push({
             id: `Part_${partIdCounter++}`,
