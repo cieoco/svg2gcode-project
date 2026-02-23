@@ -3,6 +3,7 @@
  */
 
 import { fmt } from '../utils.js';
+import { optimizePath } from './path-optimizer.js';
 
 function normalizePostProcessor(postProcessor) {
     const val = String(postProcessor || '').toLowerCase();
@@ -12,13 +13,13 @@ function normalizePostProcessor(postProcessor) {
 export function gcodeHeader({ safeZ, spindle, postProcessor }) {
     const lines = [];
     const post = normalizePostProcessor(postProcessor);
-    lines.push(`(MVP 4-BAR PARTS, ${post === 'mach3' ? 'MACH3' : 'GRBL'})`);
+    lines.push(`(SVG2GCODE, ${post === 'mach3' ? 'MACH3' : 'GRBL'})`);
     lines.push("G21  (MM)");
     lines.push("G90  (ABSOLUTE)");
     lines.push("G17  (XY PLANE)");
-    lines.push("G94  (FEED PER MINUTE)");
-    lines.push("G64  (CONSTANT VELOCITY)");
     if (post === 'mach3') {
+        lines.push("G94  (FEED PER MINUTE)");
+        lines.push("G64  (CONSTANT VELOCITY MODE)");
         lines.push("G40  (CUTTER COMP OFF)");
         lines.push("G49  (TOOL LENGTH COMP OFF)");
         lines.push("G80  (CANCEL CANNED CYCLES)");
@@ -334,40 +335,199 @@ export function profilePathOps({
         zLevels.push(-Math.min(i * sd, total));
     }
 
+    // --- Optimize: simplify + arc fitting ---
+    const moves = optimizePath(points, {
+        simplifyTolerance: 0.005,
+        arcTolerance: 0.01,
+        minArcRadius: 0.5,
+        maxArcRadius: 100000,
+        enableArcFitting: true,
+    });
+
+    if (!moves || moves.length === 0) return [];
+
+    // Compute total path length for tab intervals
     let totalLen = 0;
-    for (let i = 1; i < points.length; i++) {
-        const dx = points[i].x - points[i - 1].x;
-        const dy = points[i].y - points[i - 1].y;
-        totalLen += Math.hypot(dx, dy);
+    for (const m of moves) {
+        if (m.type === 'arc') {
+            totalLen += arcMoveLength(m);
+        } else {
+            totalLen += Math.hypot(m.to.x - m.from.x, m.to.y - m.from.y);
+        }
     }
-    const lastP = points[points.length - 1];
-    if (lastP.x !== points[0].x || lastP.y !== points[0].y) {
-        totalLen += Math.hypot(points[0].x - lastP.x, points[0].y - lastP.y);
-    }
+
     const tabIntervals = buildTabIntervals(totalLen, tabCount, tabWidth);
 
-    const startX = points[0].x;
-    const startY = points[0].y;
+    const startX = moves[0].from.x;
+    const startY = moves[0].from.y;
 
-    for (const z of zLevels) {
+    // Check if path is closed
+    const lastMove = moves[moves.length - 1];
+    const isClosed = Math.hypot(lastMove.to.x - startX, lastMove.to.y - startY) < 0.01;
+
+    for (let li = 0; li < zLevels.length; li++) {
+        const z = zLevels[li];
         const tabActive = tabIntervals.length && Number.isFinite(tabZ) && z < tabZ - 1e-6;
         let dist = 0;
+
+        // Ramp entry for closed paths (except first layer if only 1 layer)
+        const useRamp = isClosed && zLevels.length > 1 && li > 0;
+
         lines.push(`G0 Z${fmt(safeZ)}`);
         lines.push(`G0 X${fmt(startX)} Y${fmt(startY)}`);
-        lines.push(`G1 Z${fmt(z)} F${fmt(feedZ)}`);
 
-        for (let j = 1; j < points.length; j++) {
-            dist = addLineWithTabs(lines, points[j - 1], points[j], z, tabZ, tabIntervals, dist, feedXY, feedZ, tabActive);
+        if (useRamp) {
+            // Ramp entry: plunge gradually over the first move
+            const prevZ = li > 0 ? zLevels[li - 1] : 0;
+            lines.push(`G1 Z${fmt(prevZ)} F${fmt(feedZ)}`);
+            // Ramp down over the first segment
+            const firstMove = moves[0];
+            if (firstMove.type === 'line') {
+                const rampLen = Math.hypot(firstMove.to.x - firstMove.from.x, firstMove.to.y - firstMove.from.y);
+                if (rampLen > 0.1) {
+                    // Ramp by moving XY and Z simultaneously
+                    const rampFeed = Math.min(feedXY, Math.sqrt(feedXY * feedXY + feedZ * feedZ));
+                    lines.push(`G1 X${fmt(firstMove.to.x)} Y${fmt(firstMove.to.y)} Z${fmt(z)} F${fmt(rampFeed)}`);
+                    dist += rampLen;
+                    // Continue from move index 1
+                    for (let mi = 1; mi < moves.length; mi++) {
+                        dist = emitOptimizedMove(lines, moves[mi], z, tabZ, tabIntervals, dist, feedXY, feedZ, tabActive);
+                    }
+                    lines.push(`G0 Z${fmt(safeZ)}`);
+                    continue;
+                }
+            }
+            // Fallback: normal plunge
+            lines.push(`G1 Z${fmt(z)} F${fmt(feedZ)}`);
+        } else {
+            lines.push(`G1 Z${fmt(z)} F${fmt(feedZ)}`);
         }
 
-        if (lastP.x !== startX || lastP.y !== startY) {
-            addLineWithTabs(lines, lastP, { x: startX, y: startY }, z, tabZ, tabIntervals, dist, feedXY, feedZ, tabActive);
+        for (const move of moves) {
+            dist = emitOptimizedMove(lines, move, z, tabZ, tabIntervals, dist, feedXY, feedZ, tabActive);
+        }
+
+        // Close path if not already closed
+        if (!isClosed) {
+            // nothing — open path stays open
         }
 
         lines.push(`G0 Z${fmt(safeZ)}`);
     }
 
     return lines;
+}
+
+/**
+ * Emit a single optimized move (line or arc) with tab support
+ */
+function emitOptimizedMove(lines, move, z, tabZ, tabIntervals, dist, feedXY, feedZ, tabActive) {
+    if (move.type === 'arc') {
+        return emitArcMove(lines, move, z, tabZ, tabIntervals, dist, feedXY, feedZ, tabActive);
+    } else {
+        return addLineWithTabs(lines, move.from, move.to, z, tabZ, tabIntervals, dist, feedXY, feedZ, tabActive);
+    }
+}
+
+/**
+ * Emit an arc move (G2/G3) with tab support
+ */
+function emitArcMove(lines, move, z, tabZ, tabIntervals, dist, feedXY, feedZ, tabActive) {
+    const { from, to, center, clockwise } = move;
+
+    // Calculate I, J (relative center offsets from start point)
+    const iOff = center.x - from.x;
+    const jOff = center.y - from.y;
+
+    const arcLen = arcMoveLength(move);
+    const cmd = clockwise ? 'G2' : 'G3';
+
+    if (!tabActive || !tabIntervals.length || !Number.isFinite(tabZ)) {
+        lines.push(`${cmd} X${fmt(to.x)} Y${fmt(to.y)} I${fmt(iOff)} J${fmt(jOff)} F${fmt(feedXY)}`);
+        return dist + arcLen;
+    }
+
+    // Check if any tab interval overlaps this arc segment
+    let hasOverlap = false;
+    for (const interval of tabIntervals) {
+        if (interval.start < dist + arcLen && interval.end > dist) {
+            hasOverlap = true;
+            break;
+        }
+    }
+
+    if (!hasOverlap) {
+        lines.push(`${cmd} X${fmt(to.x)} Y${fmt(to.y)} I${fmt(iOff)} J${fmt(jOff)} F${fmt(feedXY)}`);
+        return dist + arcLen;
+    }
+
+    // Tab overlaps arc — need to break into sub-arcs
+    const radius = Math.hypot(iOff, jOff);
+    const startAngle = Math.atan2(from.y - center.y, from.x - center.x);
+
+    let cursor = 0;
+    for (const interval of tabIntervals) {
+        if (interval.end <= dist || interval.start >= dist + arcLen) continue;
+        const localStart = Math.max(0, interval.start - dist);
+        const localEnd = Math.min(arcLen, interval.end - dist);
+
+        if (localStart > cursor + 1e-6) {
+            // Emit normal arc up to tab start
+            const aEnd = startAngle + (clockwise ? -1 : 1) * (localStart / radius);
+            const ex = center.x + radius * Math.cos(aEnd);
+            const ey = center.y + radius * Math.sin(aEnd);
+            const aCurr = startAngle + (clockwise ? -1 : 1) * (cursor / radius);
+            const sx = center.x + radius * Math.cos(aCurr);
+            const sy = center.y + radius * Math.sin(aCurr);
+            const ci = center.x - sx;
+            const cj = center.y - sy;
+            lines.push(`${cmd} X${fmt(ex)} Y${fmt(ey)} I${fmt(ci)} J${fmt(cj)} F${fmt(feedXY)}`);
+        }
+
+        if (localEnd > localStart + 1e-6) {
+            // Raise to tab Z
+            lines.push(`G1 Z${fmt(tabZ)} F${fmt(feedZ)}`);
+            // Emit arc at tab height
+            const aStart2 = startAngle + (clockwise ? -1 : 1) * (localStart / radius);
+            const aEnd2 = startAngle + (clockwise ? -1 : 1) * (localEnd / radius);
+            const sx2 = center.x + radius * Math.cos(aStart2);
+            const sy2 = center.y + radius * Math.sin(aStart2);
+            const ex2 = center.x + radius * Math.cos(aEnd2);
+            const ey2 = center.y + radius * Math.sin(aEnd2);
+            const ci2 = center.x - sx2;
+            const cj2 = center.y - sy2;
+            lines.push(`${cmd} X${fmt(ex2)} Y${fmt(ey2)} I${fmt(ci2)} J${fmt(cj2)} F${fmt(feedXY)}`);
+            // Return to cut depth
+            lines.push(`G1 Z${fmt(z)} F${fmt(feedZ)}`);
+        }
+        cursor = Math.max(cursor, localEnd);
+    }
+
+    if (cursor < arcLen - 1e-6) {
+        // Emit remaining arc
+        const aCurr = startAngle + (clockwise ? -1 : 1) * (cursor / radius);
+        const sx = center.x + radius * Math.cos(aCurr);
+        const sy = center.y + radius * Math.sin(aCurr);
+        const ci = center.x - sx;
+        const cj = center.y - sy;
+        lines.push(`${cmd} X${fmt(to.x)} Y${fmt(to.y)} I${fmt(ci)} J${fmt(cj)} F${fmt(feedXY)}`);
+    }
+
+    return dist + arcLen;
+}
+
+/**
+ * Calculate arc move length
+ */
+function arcMoveLength(move) {
+    const { from, to, center, radius, clockwise } = move;
+    const r = radius || Math.hypot(center.x - from.x, center.y - from.y);
+    const a1 = Math.atan2(from.y - center.y, from.x - center.x);
+    const a2 = Math.atan2(to.y - center.y, to.x - center.x);
+    let sweep = clockwise ? (a1 - a2) : (a2 - a1);
+    if (sweep < 0) sweep += Math.PI * 2;
+    if (sweep > Math.PI * 2) sweep -= Math.PI * 2;
+    return Math.abs(sweep) * r;
 }
 
 export function profileTangentHullOps({

@@ -220,6 +220,8 @@ export function update3DToolpath(gcodeText, mfg) {
         let newX = x, newY = y, newZ = z;
         let newIsRapid = isRapid;
         let moved = false;
+        let gCode = -1;
+        let iVal = NaN, jVal = NaN;
 
         for (const token of parts) {
             const char = token[0];
@@ -227,8 +229,9 @@ export function update3DToolpath(gcodeText, mfg) {
             if (isNaN(val)) continue;
 
             if (char === 'G') {
+                gCode = val;
                 if (val === 0) newIsRapid = true;
-                if (val === 1) newIsRapid = false;
+                if (val === 1 || val === 2 || val === 3) newIsRapid = false;
             } else if (char === 'X') {
                 newX = val; moved = true;
                 if (newX < minX) minX = newX;
@@ -239,17 +242,64 @@ export function update3DToolpath(gcodeText, mfg) {
                 if (newY > maxY) maxY = newY;
             } else if (char === 'Z') {
                 newZ = val; moved = true;
+            } else if (char === 'I') {
+                iVal = val;
+            } else if (char === 'J') {
+                jVal = val;
             }
         }
 
         if (moved) {
             isRapid = newIsRapid;
-            const pt = new THREE.Vector3(newX, newY, newZ);
-            const dist = pt.distanceTo(animationPoints[animationPoints.length - 1].p);
-            totalPathLength += dist;
 
-            animationPoints.push({ p: pt, isRapid });
-            pathLengths.push(totalPathLength);
+            // G2/G3 arc interpolation — sample arc into small line segments for 3D preview
+            if ((gCode === 2 || gCode === 3) && !isNaN(iVal) && !isNaN(jVal)) {
+                const cx = x + iVal;
+                const cy = y + jVal;
+                const r = Math.hypot(iVal, jVal);
+                const startAngle = Math.atan2(y - cy, x - cx);
+                const endAngle = Math.atan2(newY - cy, newX - cx);
+                const ccw = (gCode === 3);
+
+                let sweep = ccw ? (endAngle - startAngle) : (startAngle - endAngle);
+                if (sweep <= 0) sweep += Math.PI * 2;
+
+                // Sample arc — approximately 1 point per 5 degrees for smooth display
+                const numSegments = Math.max(4, Math.ceil(sweep / (5 * Math.PI / 180)));
+                const angleStep = sweep / numSegments;
+
+                for (let si = 1; si <= numSegments; si++) {
+                    const a = startAngle + (ccw ? 1 : -1) * angleStep * si;
+                    let ax, ay;
+                    if (si === numSegments) {
+                        ax = newX; ay = newY; // Use exact endpoint
+                    } else {
+                        ax = cx + r * Math.cos(a);
+                        ay = cy + r * Math.sin(a);
+                    }
+                    // Interpolate Z linearly across the arc
+                    const t = si / numSegments;
+                    const az = z + (newZ - z) * t;
+
+                    const pt = new THREE.Vector3(ax, ay, az);
+                    const dist = pt.distanceTo(animationPoints[animationPoints.length - 1].p);
+                    totalPathLength += dist;
+                    animationPoints.push({ p: pt, isRapid: false });
+                    pathLengths.push(totalPathLength);
+
+                    if (ax < minX) minX = ax;
+                    if (ax > maxX) maxX = ax;
+                    if (ay < minY) minY = ay;
+                    if (ay > maxY) maxY = ay;
+                }
+            } else {
+                // Regular G0/G1 linear move
+                const pt = new THREE.Vector3(newX, newY, newZ);
+                const dist = pt.distanceTo(animationPoints[animationPoints.length - 1].p);
+                totalPathLength += dist;
+                animationPoints.push({ p: pt, isRapid });
+                pathLengths.push(totalPathLength);
+            }
 
             x = newX; y = newY; z = newZ;
         }

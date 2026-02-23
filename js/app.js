@@ -350,9 +350,9 @@ function applyGcodeOffset(gcodeText, offsetX, offsetY, offsetZ) {
 
         return line.replace(/([XYZ])([-\d.]+)/g, (match, axis, val) => {
             const v = parseFloat(val);
-            if (axis === 'X') return `X${(v + offsetX).toFixed(4)}`;
-            if (axis === 'Y') return `Y${(v + offsetY).toFixed(4)}`;
-            if (axis === 'Z') return `Z${(v + offsetZ).toFixed(4)}`;
+            if (axis === 'X') return `X${(v + offsetX).toFixed(3)}`;
+            if (axis === 'Y') return `Y${(v + offsetY).toFixed(3)}`;
+            if (axis === 'Z') return `Z${(v + offsetZ).toFixed(3)}`;
             return match;
         });
     }).filter(l => l !== '').join('\r\n');
@@ -562,9 +562,34 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Listen to changes on all settings inputs and save automatically
     const settingInputs = document.querySelectorAll('.settings-section input, .settings-section select');
+
+    function flashSaved(el) {
+        el.style.transition = 'box-shadow 0.15s ease, border-color 0.15s ease';
+        el.style.borderColor = '#22c55e';
+        el.style.boxShadow = '0 0 0 2px rgba(34,197,94,0.35)';
+        setTimeout(() => {
+            el.style.borderColor = '';
+            el.style.boxShadow = '';
+        }, 800);
+    }
+
     settingInputs.forEach(input => {
+        // Save on change (blur / select change)
         input.addEventListener('change', () => {
-            getMfgData(); // calling this automatically triggers saveMfgData
+            getMfgData();
+            flashSaved(input);
         });
+
+        // Save on Enter key for number/text inputs
+        if (input.tagName === 'INPUT') {
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    getMfgData();
+                    flashSaved(input);
+                    input.blur(); // remove focus
+                }
+            });
+        }
     });
 });
