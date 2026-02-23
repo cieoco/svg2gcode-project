@@ -42,7 +42,7 @@ export function gcodeFooter({ safeZ, spindle, postProcessor }) {
 
 export function drillOps({ holes, safeZ, drillZ, feedZ }) {
     const lines = [];
-    lines.push("(Drill holes)");
+    lines.push("(DRILL HOLES)");
     for (const h of holes) {
         lines.push(`G0 Z${fmt(safeZ)}`);
         lines.push(`G0 X${fmt(h.x)} Y${fmt(h.y)}`);
