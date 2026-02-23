@@ -1,0 +1,11 @@
+# G-Code export files (generated output, should not be tracked)
+*.nc
+*.gcode
+*.tap
+
+# Node
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
