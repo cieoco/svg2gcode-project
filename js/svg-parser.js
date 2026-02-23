@@ -340,7 +340,7 @@ function parseDAttribute(d, svgToMm) {
             }
             case 'A': {
                 // Arc: rx ry x-rot large-arc sweep x y (7 params each)
-                for (let i = 0; i + 6 < args.length; i += 7) {
+                for (let i = 0; i + 7 <= args.length; i += 7) {
                     let arx = args[i], ary = args[i + 1];
                     const xRot = args[i + 2] * Math.PI / 180;
                     const fA = args[i + 3];
@@ -348,9 +348,9 @@ function parseDAttribute(d, svgToMm) {
                     let nx = args[i + 5], ny = args[i + 6];
                     if (isRel) { nx += curX; ny += curY; }
 
-                    // Check if this is a circular arc (rx ≈ ry, no rotation)
-                    const isCircular = Math.abs(arx - ary) < 0.01 * Math.max(arx, ary)
-                        && Math.abs(xRot) < 0.01;
+                    // Check if this is a circular arc (rx ≈ ry)
+                    // When rx ≈ ry, rotation doesn't matter (circle is rotationally symmetric)
+                    const isCircular = Math.abs(arx - ary) < 0.01 * Math.max(arx, ary);
 
                     const arcInfo = svgArcToCenter(curX, curY, arx, ary, xRot, fA, fS, nx, ny);
 
