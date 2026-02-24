@@ -291,16 +291,21 @@ function loadMfgData() {
 }
 
 function getMfgData() {
+    const readNum = (id, fallback) => {
+        const v = parseFloat(document.getElementById(id).value);
+        return Number.isFinite(v) ? v : fallback;
+    };
+
     const mfg = {
-        safeZ: parseFloat(document.getElementById('safeZ').value) || 5,
-        thickness: parseFloat(document.getElementById('thickness').value) || 3,
-        materialMargin: parseFloat(document.getElementById('materialMargin').value) || 4,
-        overcut: parseFloat(document.getElementById('overcut').value) || 0.5,
-        stepdown: parseFloat(document.getElementById('stepdown').value) || 1,
-        feedXY: parseFloat(document.getElementById('feedXY').value) || 1000,
-        feedZ: parseFloat(document.getElementById('feedZ').value) || 300,
-        spindle: parseFloat(document.getElementById('spindle').value) || 10000,
-        toolD: parseFloat(document.getElementById('toolD').value) || 3.175,
+        safeZ: readNum('safeZ', 5),
+        thickness: readNum('thickness', 3),
+        materialMargin: readNum('materialMargin', 4),
+        overcut: readNum('overcut', 0.5),
+        stepdown: readNum('stepdown', 1),
+        feedXY: readNum('feedXY', 1000),
+        feedZ: readNum('feedZ', 300),
+        spindle: readNum('spindle', 10000),
+        toolD: readNum('toolD', 3.175),
         postProcessor: document.getElementById('postProcessor').value || 'grbl',
         originMode: document.getElementById('originMode').value || 'top-bottomleft',
 
