@@ -297,11 +297,11 @@ function getMfgData() {
     };
 
     const mfg = {
-        safeZ: readNum('safeZ', 5),
-        thickness: readNum('thickness', 3),
+        safeZ: readNum('safeZ', 10),
+        thickness: readNum('thickness', 7),
         materialMargin: readNum('materialMargin', 4),
-        overcut: readNum('overcut', 0.5),
-        stepdown: readNum('stepdown', 1),
+        overcut: readNum('overcut', 0.0),
+        stepdown: readNum('stepdown', 1.5),
         feedXY: readNum('feedXY', 1000),
         feedZ: readNum('feedZ', 300),
         spindle: readNum('spindle', 10000),
