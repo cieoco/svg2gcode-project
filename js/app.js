@@ -284,6 +284,21 @@ function loadMfgData() {
             if (mfg.toolD !== undefined) document.getElementById('toolD').value = mfg.toolD;
             if (mfg.postProcessor !== undefined) document.getElementById('postProcessor').value = mfg.postProcessor;
             if (mfg.originMode !== undefined) document.getElementById('originMode').value = mfg.originMode;
+            // Restore tab settings
+            if (mfg.tabEnabled !== undefined) {
+                const cb = document.getElementById('tabEnable');
+                if (cb) {
+                    cb.checked = mfg.tabEnabled;
+                    const panel = document.getElementById('tabSettings');
+                    if (panel) panel.style.display = mfg.tabEnabled ? 'block' : 'none';
+                }
+            }
+            if (mfg.tabThickness !== undefined && mfg.tabThickness > 0)
+                document.getElementById('tabThickness').value = mfg.tabThickness;
+            if (mfg.tabWidth !== undefined && mfg.tabWidth > 0)
+                document.getElementById('tabWidth').value = mfg.tabWidth;
+            if (mfg.tabCount !== undefined && mfg.tabCount > 0)
+                document.getElementById('tabCount').value = mfg.tabCount;
         }
     } catch (e) {
         console.warn('Could not load settings from localStorage', e);
@@ -295,6 +310,11 @@ function getMfgData() {
         const v = parseFloat(document.getElementById(id).value);
         return Number.isFinite(v) ? v : fallback;
     };
+
+    const tabEnabled = document.getElementById('tabEnable')?.checked || false;
+    const tabThicknessRaw = readNum('tabThickness', 1);
+    const tabWidthRaw = readNum('tabWidth', 4);
+    const tabCountRaw = readNum('tabCount', 4);
 
     const mfg = {
         safeZ: readNum('safeZ', 10),
@@ -309,12 +329,11 @@ function getMfgData() {
         postProcessor: document.getElementById('postProcessor').value || 'grbl',
         originMode: document.getElementById('originMode').value || 'top-bottomleft',
 
-        // Hardcode bridge/tab off for now until UI is added
-        tabThickness: 0,
-        tabWidth: 0,
-        tabCount: 0
+        tabThickness: tabEnabled ? tabThicknessRaw : 0,
+        tabWidth: tabEnabled ? tabWidthRaw : 0,
+        tabCount: tabEnabled ? tabCountRaw : 0
     };
-    saveMfgData(mfg);
+    saveMfgData({ ...mfg, tabEnabled }); // also persist the checkbox state
     return mfg;
 }
 
@@ -576,6 +595,16 @@ function renderToolpathList() {
 document.addEventListener('DOMContentLoaded', () => {
     // Restore saved settings on initial load
     loadMfgData();
+
+    // Tab enable/disable toggle
+    const tabEnableCb = document.getElementById('tabEnable');
+    const tabSettingsPanel = document.getElementById('tabSettings');
+    if (tabEnableCb && tabSettingsPanel) {
+        tabEnableCb.addEventListener('change', () => {
+            tabSettingsPanel.style.display = tabEnableCb.checked ? 'block' : 'none';
+            getMfgData();
+        });
+    }
 
     // Listen to changes on all settings inputs and save automatically
     const settingInputs = document.querySelectorAll('.settings-section input, .settings-section select');
