@@ -14,6 +14,7 @@ const fileInput = document.getElementById('fileInput');
 const previewSvg = document.getElementById('previewSvg');
 const generateBtn = document.getElementById('generateBtn');
 const logText = document.getElementById('logText');
+const themeSelect = document.getElementById('themeSelect');
 
 const tab2D = document.getElementById('tab2D');
 const tab3D = document.getElementById('tab3D');
@@ -28,6 +29,7 @@ const lblProgress = document.getElementById('lblProgress');
 const speedSelect = document.getElementById('speedSelect');
 
 const rotateAngle = document.getElementById('rotateAngle');
+const THEME_STORAGE_KEY = 'svg2gcode_theme';
 
 rotateAngle.addEventListener('input', (e) => {
     const svgEl = previewSvg.querySelector('svg');
@@ -97,6 +99,27 @@ function log(msg) {
         logText.innerText = msg;
     }
     console.log(msg);
+}
+
+function applyTheme(theme) {
+    const t = theme === 'light' ? 'light' : 'dark';
+    document.body.classList.toggle('theme-light', t === 'light');
+    if (themeSelect) themeSelect.value = t;
+    try {
+        localStorage.setItem(THEME_STORAGE_KEY, t);
+    } catch (e) {
+        console.warn('Could not save theme to localStorage', e);
+    }
+}
+
+function initTheme() {
+    let savedTheme = 'dark';
+    try {
+        savedTheme = localStorage.getItem(THEME_STORAGE_KEY) || 'dark';
+    } catch (e) {
+        console.warn('Could not load theme from localStorage', e);
+    }
+    applyTheme(savedTheme);
 }
 
 function isSvgFile(file) {
@@ -574,12 +597,31 @@ generateBtn.addEventListener('click', () => {
 // --- Toolpath Ordering Logic ---
 let draggedPartId = null;
 
+function enforceToolpathListViewportLimit(listEl, maxRows = 10) {
+    if (!listEl) return;
+    listEl.style.overflowY = 'auto';
+    const firstItem = listEl.querySelector('.toolpath-item');
+    if (!firstItem) {
+        listEl.style.maxHeight = '160px';
+        return;
+    }
+
+    const rowStyle = window.getComputedStyle(firstItem);
+    const rowHeight = firstItem.offsetHeight + (parseFloat(rowStyle.marginBottom) || 0);
+    const listStyle = window.getComputedStyle(listEl);
+    const padTop = parseFloat(listStyle.paddingTop) || 0;
+    const padBottom = parseFloat(listStyle.paddingBottom) || 0;
+    const limitHeight = Math.ceil(rowHeight * maxRows + padTop + padBottom);
+    listEl.style.maxHeight = `${limitHeight}px`;
+}
+
 function renderToolpathList() {
     const list = document.getElementById('toolpathList');
     if (!list) return;
 
     if (!currentParts || currentParts.length === 0) {
         list.innerHTML = '<div style="padding: 10px; color: var(--text-muted); text-align: center; font-size: 0.85rem;">等待載入 SVG / DXF 檔案...</div>';
+        enforceToolpathListViewportLimit(list, 10);
         return;
     }
 
@@ -656,10 +698,19 @@ function renderToolpathList() {
 
         list.appendChild(el);
     });
+
+    enforceToolpathListViewportLimit(list, 10);
 }
 
 // --- Initialization ---
 document.addEventListener('DOMContentLoaded', () => {
+    initTheme();
+    if (themeSelect) {
+        themeSelect.addEventListener('change', () => {
+            applyTheme(themeSelect.value);
+        });
+    }
+
     // Restore saved settings on initial load
     loadMfgData();
 

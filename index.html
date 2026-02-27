@@ -31,6 +31,13 @@
                     <p class="app-subtitle">快速、免安裝的本機 SVG / DXF 轉 CNC 加工路徑工具</p>
                 </div>
             </div>
+            <div class="theme-switch">
+                <label for="themeSelect">風格</label>
+                <select id="themeSelect">
+                    <option value="dark" selected>深色</option>
+                    <option value="light">淺色</option>
+                </select>
+            </div>
         </header>
 
         <div class="main-content">
@@ -134,68 +141,57 @@
                     <h2>CAM 加工參數</h2>
                 </div>
 
-                <div class="settings-grid">
-                    <div class="input-group">
-                        <label for="thickness">材料厚度 (mm)</label>
-                        <input type="number" id="thickness" value="7" step="0.5">
+                <div class="settings-kv">
+                    <div class="kv-row">
+                        <label class="kv-label" for="thickness">材料厚度 (mm)</label>
+                        <input class="kv-field" type="number" id="thickness" value="7" step="0.5">
                     </div>
-
-                    <div class="input-group">
-                        <label for="materialMargin">胚料邊距 (mm)</label>
-                        <input type="number" id="materialMargin" value="4" step="1" title="3D預覽中胚料大於圖形的邊距">
+                    <div class="kv-row">
+                        <label class="kv-label" for="materialMargin">胚料邊距 (mm)</label>
+                        <input class="kv-field" type="number" id="materialMargin" value="4" step="1" title="3D預覽中胚料大於圖形的邊距">
                     </div>
-
-                    <div class="input-group">
-                        <label for="overcut">過切深度 / Overcut (mm)</label>
-                        <input type="number" id="overcut" value="0.0" step="0.1">
+                    <div class="kv-row">
+                        <label class="kv-label" for="overcut">過切深度 / Overcut (mm)</label>
+                        <input class="kv-field" type="number" id="overcut" value="0.0" step="0.1">
                     </div>
-
-                    <div class="input-group">
-                        <label for="stepdown">每層下刀量 (mm)</label>
-                        <input type="number" id="stepdown" value="1.5" step="0.1">
+                    <div class="kv-row">
+                        <label class="kv-label" for="stepdown">每層下刀量 (mm)</label>
+                        <input class="kv-field" type="number" id="stepdown" value="1.5" step="0.1">
                     </div>
-
-                    <div class="input-group">
-                        <label for="safeZ">安全高度 Safe Z (mm)</label>
-                        <input type="number" id="safeZ" value="10" step="1">
+                    <div class="kv-row">
+                        <label class="kv-label" for="safeZ">安全高度 Safe Z (mm)</label>
+                        <input class="kv-field" type="number" id="safeZ" value="10" step="1">
                     </div>
-
-                    <div class="input-group">
-                        <label for="feedXY">XY 軸進給率 (mm/min)</label>
-                        <input type="number" id="feedXY" value="1000" step="100">
+                    <div class="kv-row">
+                        <label class="kv-label" for="feedXY">XY 軸進給率 (mm/min)</label>
+                        <input class="kv-field" type="number" id="feedXY" value="1000" step="100">
                     </div>
-
-                    <div class="input-group">
-                        <label for="feedZ">Z 軸下刀進給率 (mm/min)</label>
-                        <input type="number" id="feedZ" value="300" step="50">
+                    <div class="kv-row">
+                        <label class="kv-label" for="feedZ">Z 軸下刀進給率 (mm/min)</label>
+                        <input class="kv-field" type="number" id="feedZ" value="300" step="50">
                     </div>
-
-                    <div class="input-group">
-                        <label for="spindle">主軸轉速 (RPM)</label>
-                        <input type="number" id="spindle" value="10000" step="1000">
+                    <div class="kv-row">
+                        <label class="kv-label" for="spindle">主軸轉速 (RPM)</label>
+                        <input class="kv-field" type="number" id="spindle" value="10000" step="1000">
                     </div>
-
-                    <div class="input-group">
-                        <label for="toolD">刀具直徑 (mm)</label>
-                        <input type="number" id="toolD" value="4" step="0.01">
+                    <div class="kv-row">
+                        <label class="kv-label" for="toolD">刀具直徑 (mm)</label>
+                        <input class="kv-field" type="number" id="toolD" value="4" step="0.01">
                     </div>
-
-                    <div class="input-group fw">
-                        <label for="postProcessor">後處理器格式</label>
-                        <select id="postProcessor">
+                    <div class="kv-row">
+                        <label class="kv-label" for="postProcessor">後處理器格式</label>
+                        <select class="kv-field" id="postProcessor">
                             <option value="grbl">通用 GRBL</option>
                             <option value="mach3">Mach3</option>
                         </select>
                     </div>
-
-                    <div class="input-group fw">
-                        <label for="rotateAngle">工件旋轉角度 (度)</label>
-                        <input type="number" id="rotateAngle" value="0" step="15" title="可輸入正負角度，順時針為正">
+                    <div class="kv-row">
+                        <label class="kv-label" for="rotateAngle">工件旋轉角度 (度)</label>
+                        <input class="kv-field" type="number" id="rotateAngle" value="0" step="15" title="可輸入正負角度，順時針為正">
                     </div>
-
-                    <div class="input-group fw">
-                        <label for="originMode">工件原點 (Work Origin)</label>
-                        <select id="originMode">
+                    <div class="kv-row">
+                        <label class="kv-label" for="originMode">工件原點 (Work Origin)</label>
+                        <select class="kv-field" id="originMode">
                             <option value="top-center">頂面中心</option>
                             <option value="top-bottomleft">頂面左下角</option>
                             <option value="bottom-center">底面中心</option>
@@ -214,18 +210,18 @@
                         </label>
                     </div>
                     <div id="tabSettings" style="display:none;">
-                        <div class="settings-grid">
-                            <div class="input-group">
-                                <label for="tabCount">數量 (個)</label>
-                                <input type="number" id="tabCount" value="4" step="1" min="1">
+                        <div class="settings-kv tab-kv">
+                            <div class="kv-row">
+                                <label class="kv-label" for="tabCount">數量 (個)</label>
+                                <input class="kv-field" type="number" id="tabCount" value="4" step="1" min="1">
                             </div>
-                            <div class="input-group">
-                                <label for="tabWidth">寬度 (mm)</label>
-                                <input type="number" id="tabWidth" value="4" step="0.5" min="0.5">
+                            <div class="kv-row">
+                                <label class="kv-label" for="tabWidth">寬度 (mm)</label>
+                                <input class="kv-field" type="number" id="tabWidth" value="4" step="0.5" min="0.5">
                             </div>
-                            <div class="input-group fw">
-                                <label for="tabThickness">橋厚度 (mm) <span style="color:var(--text-muted);font-weight:400;">— 保留多少材料不切斷</span></label>
-                                <input type="number" id="tabThickness" value="1" step="0.5" min="0.1">
+                            <div class="kv-row">
+                                <label class="kv-label" for="tabThickness">橋厚度 (mm) <span style="color:var(--text-muted);font-weight:400;">— 保留多少材料不切斷</span></label>
+                                <input class="kv-field" type="number" id="tabThickness" value="1" step="0.5" min="0.1">
                             </div>
                         </div>
                     </div>
@@ -236,9 +232,9 @@
                         <h2 style="font-size: 1rem;">加工順序 (上下拖曳以排序)</h2>
                     </div>
                     <div class="toolpath-list-container" id="toolpathList"
-                        style="border: 1px solid var(--border); border-radius: 4px; padding: 5px; background: rgba(0,0,0,0.2);">
+                        style="border: 1px solid var(--border); border-radius: 4px; padding: 5px; background: var(--surface);">
                         <div style="padding: 10px; color: var(--text-muted); text-align: center; font-size: 0.85rem;">
-                            等待載入 SVG 檔案...</div>
+                            等待載入 SVG / DXF 檔案...</div>
                     </div>
                 </div>
 
