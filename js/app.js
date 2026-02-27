@@ -30,11 +30,17 @@ const speedSelect = document.getElementById('speedSelect');
 
 const rotateAngle = document.getElementById('rotateAngle');
 const THEME_STORAGE_KEY = 'svg2gcode_theme';
+let refreshPreviewTransform = null;
 
 rotateAngle.addEventListener('input', (e) => {
+    if (typeof refreshPreviewTransform === 'function') {
+        refreshPreviewTransform(true);
+        return;
+    }
     const svgEl = previewSvg.querySelector('svg');
     if (svgEl) {
-        svgEl.style.transform = `rotate(${e.target.value || 0}deg)`;
+        const angle = parseFloat(e.target.value) || 0;
+        svgEl.style.transform = `rotate(${angle}deg)`;
         svgEl.style.transformOrigin = 'center center';
         svgEl.style.transition = 'transform 0.2s ease-in-out';
     }
@@ -177,6 +183,7 @@ function buildPartsPreviewSvg(parts) {
 
 function processFile(file) {
     log(`正在載入 ${file.name}...`);
+    refreshPreviewTransform = null;
     const svgFile = isSvgFile(file);
     const dxfFile = isDxfFile(file);
     if (!svgFile && !dxfFile) {
@@ -300,10 +307,14 @@ function setupSvgInteractions(parts) {
     // Use a wrapper or transform the SVG directly? 
     // It's safer to transform the SVG element itself.
     svgEl.style.transformOrigin = 'center center';
+    const getRotateDeg = () => (parseFloat(rotateAngle.value) || 0);
 
-    function updateTransform() {
-        svgEl.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+    function updateTransform(animate = false) {
+        const rot = getRotateDeg();
+        svgEl.style.transition = animate ? 'transform 0.2s ease-in-out' : 'none';
+        svgEl.style.transform = `translate(${panX}px, ${panY}px) scale(${scale}) rotate(${rot}deg)`;
     }
+    refreshPreviewTransform = (animate = false) => updateTransform(animate);
 
     // Zoom (Mouse Wheel)
     previewSvg.addEventListener('wheel', (e) => {
@@ -312,7 +323,7 @@ function setupSvgInteractions(parts) {
         scale *= zoomDelta;
         // Limit zoom
         scale = Math.max(0.1, Math.min(scale, 10));
-        updateTransform();
+        updateTransform(false);
     }, { passive: false });
 
     // Pan (Mouse Drag)
@@ -331,7 +342,7 @@ function setupSvgInteractions(parts) {
         isDraggingSvg = true; // Flage to prevent click event on paths
         panX = e.clientX - startX;
         panY = e.clientY - startY;
-        updateTransform();
+        updateTransform(false);
     });
 
     window.addEventListener('mouseup', () => {
@@ -342,7 +353,7 @@ function setupSvgInteractions(parts) {
     });
 
     // Initial reset
-    updateTransform();
+    updateTransform(false);
 }
 
 // Global flag to prevent click after drag
