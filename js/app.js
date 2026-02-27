@@ -3,6 +3,7 @@
  */
 
 import { parseSVG } from './svg-parser.js';
+import { parseDXF } from './dxf-parser.js';
 import { buildAllGcodes, generateMachiningInfo } from './cam/generator.js';
 import { gcodeHeader, gcodeFooter } from './cam/operations.js';
 import { init3DViewer, update3DToolpath, linkAnimationUI } from './viewer3d.js';
@@ -73,10 +74,10 @@ dropZone.addEventListener('drop', (e) => {
     e.preventDefault();
     dropZone.classList.remove('drag-over');
     const file = e.dataTransfer.files[0];
-    if (file && file.type === 'image/svg+xml') {
+    if (file && (isSvgFile(file) || isDxfFile(file))) {
         processFile(file);
     } else {
-        log("請上傳有效的 SVG 檔案。");
+        log("請上傳有效的 SVG 或 DXF 檔案。");
     }
 });
 
@@ -98,22 +99,88 @@ function log(msg) {
     console.log(msg);
 }
 
+function isSvgFile(file) {
+    if (!file) return false;
+    const name = (file.name || '').toLowerCase();
+    const type = (file.type || '').toLowerCase();
+    return name.endsWith('.svg') || type === 'image/svg+xml';
+}
+
+function isDxfFile(file) {
+    if (!file) return false;
+    const name = (file.name || '').toLowerCase();
+    const type = (file.type || '').toLowerCase();
+    return name.endsWith('.dxf') || type.includes('dxf');
+}
+
+function buildPartsPreviewSvg(parts) {
+    if (!parts || parts.length === 0) return '';
+
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const p of parts) {
+        if (!p.points) continue;
+        for (const pt of p.points) {
+            if (pt.x < minX) minX = pt.x;
+            if (pt.x > maxX) maxX = pt.x;
+            if (pt.y < minY) minY = pt.y;
+            if (pt.y > maxY) maxY = pt.y;
+        }
+    }
+    if (!Number.isFinite(minX) || !Number.isFinite(minY)) return '';
+
+    const w = Math.max(1e-6, maxX - minX);
+    const h = Math.max(1e-6, maxY - minY);
+    const pad = Math.max(2, Math.max(w, h) * 0.05);
+
+    // DXF is Y-up. SVG is Y-down, so preview uses y=-y to preserve CAD orientation.
+    const minYSvg = -maxY;
+    const viewBox = `${(minX - pad).toFixed(4)} ${(minYSvg - pad).toFixed(4)} ${(w + pad * 2).toFixed(4)} ${(h + pad * 2).toFixed(4)}`;
+
+    const paths = parts.map((part) => {
+        const pts = part.points || [];
+        if (pts.length < 2) return '';
+        const d = [];
+        d.push(`M ${pts[0].x.toFixed(4)} ${(-pts[0].y).toFixed(4)}`);
+        for (let i = 1; i < pts.length; i++) {
+            d.push(`L ${pts[i].x.toFixed(4)} ${(-pts[i].y).toFixed(4)}`);
+        }
+        const isClosed = Math.hypot(pts[0].x - pts[pts.length - 1].x, pts[0].y - pts[pts.length - 1].y) < 0.01;
+        if (isClosed) d.push('Z');
+        return `<path d="${d.join(' ')}" fill="none"></path>`;
+    }).join('');
+
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}" preserveAspectRatio="xMidYMid meet">${paths}</svg>`;
+}
+
 function processFile(file) {
     log(`正在載入 ${file.name}...`);
+    const svgFile = isSvgFile(file);
+    const dxfFile = isDxfFile(file);
+    if (!svgFile && !dxfFile) {
+        log("不支援的檔案格式，請使用 SVG 或 DXF。");
+        generateBtn.disabled = true;
+        return;
+    }
+
     const reader = new FileReader();
     reader.onload = async (e) => {
         try {
-            const svgContent = e.target.result;
-            // Display Original SVG
-            previewSvg.innerHTML = svgContent;
+            const fileContent = e.target.result;
+            if (svgFile) {
+                // Display original SVG
+                previewSvg.innerHTML = fileContent;
+                currentParts = await parseSVG(fileContent);
+            } else {
+                currentParts = parseDXF(fileContent);
+                previewSvg.innerHTML = buildPartsPreviewSvg(currentParts);
+            }
 
-            // Parse to Parts
-            currentParts = await parseSVG(svgContent);
             currentParts.forEach((part, i) => {
                 part.id = 'part_' + Date.now() + '_' + i;
             });
 
-            log(`已從 SVG 成功解析出 ${currentParts.length} 個切削零件路徑。`);
+            const sourceLabel = svgFile ? 'SVG' : 'DXF';
+            log(`已從 ${sourceLabel} 成功解析出 ${currentParts.length} 個切削零件路徑。`);
             generateBtn.disabled = currentParts.length === 0;
 
             // Make SVG elements interactive
@@ -123,7 +190,7 @@ function processFile(file) {
             renderToolpathList();
 
         } catch (err) {
-            log(`解析 SVG 時發生錯誤: ${err.message}`);
+            log(`解析檔案時發生錯誤: ${err.message}`);
             generateBtn.disabled = true;
         }
     };
@@ -512,7 +579,7 @@ function renderToolpathList() {
     if (!list) return;
 
     if (!currentParts || currentParts.length === 0) {
-        list.innerHTML = '<div style="padding: 10px; color: var(--text-muted); text-align: center; font-size: 0.85rem;">等待載入 SVG 檔案...</div>';
+        list.innerHTML = '<div style="padding: 10px; color: var(--text-muted); text-align: center; font-size: 0.85rem;">等待載入 SVG / DXF 檔案...</div>';
         return;
     }
 

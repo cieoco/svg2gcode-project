@@ -1,6 +1,6 @@
-# SVG 轉 G-Code｜網頁版 CAM 工具
+# SVG / DXF 轉 G-Code｜網頁版 CAM 工具
 
-> **Web-based SVG to G-Code CAM Tool** — No installation required, runs entirely in your browser.
+> **Web-based SVG/DXF to G-Code CAM Tool** — No installation required, runs entirely in your browser.
 
 🌐 **線上版本 / Live Demo**：[https://cieoco.github.io/svg2gcode-project/](https://cieoco.github.io/svg2gcode-project/)
 
@@ -10,7 +10,7 @@
 
 ### 功能特色
 
-- ✅ 直接拖曳 SVG 檔案，免安裝、免後端
+- ✅ 直接拖曳 SVG / DXF 檔案，免安裝、免後端
 - ✅ 支援 **圓弧原生輸出**（G2/G3），不再全是微小 G1 線段，CNC 動作更平滑
 - ✅ 支援 `GRBL` 和 `Mach3` 兩種後處理器格式
 - ✅ 每個路徑可獨立設定刀路模式：銑線外 / 銑線內 / 銑線上 / 鑽孔 / 不加工
@@ -44,7 +44,7 @@ npx http-server -p 8080 -c-1
 
 ### 使用步驟
 
-1. **拖曳或點擊上傳** SVG 檔案
+1. **拖曳或點擊上傳** SVG 或 DXF 檔案
 2. 在右側設定 **CAM 加工參數**（刀具直徑、材料厚度、進給率等）
 3. 在左側點擊各個路徑，選擇 **刀路模式**（銑線外/內/上/鑽孔）
 4. 視需要調整 **加工順序**（上下拖曳）
@@ -74,6 +74,7 @@ svg2gcode-project/
 ├── js/
 │   ├── app.js              # 主應用邏輯（載入、互動、下載）
 │   ├── svg-parser.js       # SVG 解析器（Strategy B：直接解析 d 屬性）
+│   ├── dxf-parser.js       # DXF 解析器（LINE/LWPOLYLINE/POLYLINE/CIRCLE/ARC）
 │   ├── viewer3d.js         # Three.js 3D 刀路預覽
 │   ├── utils.js            # 工具函式（數字格式化等）
 │   └── cam/
@@ -101,7 +102,7 @@ svg2gcode-project/
 
 ### Features
 
-- ✅ Drag & drop SVG files — no installation, no backend required
+- ✅ Drag & drop SVG/DXF files — no installation, no backend required
 - ✅ **Native arc output** (G2/G3) — smoother CNC motion vs thousands of micro G1 segments
 - ✅ Supports both `GRBL` and `Mach3` post-processor formats
 - ✅ Per-path toolpath modes: Outside / Inside / On-Path / Drill / None
@@ -130,7 +131,7 @@ Open `http://localhost:8080` in your browser, or simply open `index.html` direct
 
 ### Usage
 
-1. **Drag & drop** (or click to upload) your SVG file
+1. **Drag & drop** (or click to upload) your SVG or DXF file
 2. Configure **CAM parameters** on the right panel (tool diameter, material thickness, feed rates, etc.)
 3. Click each path in the preview to assign a **toolpath mode** (outside / inside / on-path / drill)
 4. Optionally reorder operations by **dragging** in the machining sequence list
@@ -160,6 +161,7 @@ svg2gcode-project/
 ├── js/
 │   ├── app.js              # Main app logic (load, interact, download)
 │   ├── svg-parser.js       # SVG parser (Strategy B: direct d-attribute parsing)
+│   ├── dxf-parser.js       # DXF parser (LINE/LWPOLYLINE/POLYLINE/CIRCLE/ARC)
 │   ├── viewer3d.js         # Three.js 3D toolpath preview
 │   ├── utils.js            # Utilities (number formatting, etc.)
 │   └── cam/

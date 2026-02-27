@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SVG 轉 G-Code | 網頁版 CAM 工具</title>
+    <title>SVG / DXF 轉 G-Code | 網頁版 CAM 工具</title>
     <link rel="stylesheet" href="css/style.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -27,8 +27,8 @@
                     </svg>
                 </div>
                 <div>
-                    <h1 class="app-title">SVG 轉 G-Code</h1>
-                    <p class="app-subtitle">快速、免安裝的本機 SVG 轉 CNC 加工路徑工具</p>
+                    <h1 class="app-title">SVG / DXF 轉 G-Code</h1>
+                    <p class="app-subtitle">快速、免安裝的本機 SVG / DXF 轉 CNC 加工路徑工具</p>
                 </div>
             </div>
         </header>
@@ -39,7 +39,7 @@
                 <div class="section-header" style="display: flex; justify-content: space-between; align-items: center;">
                     <h2>設計圖片</h2>
                     <div class="view-tabs" style="display: flex; gap: 8px;">
-                        <button id="tab2D" class="tab-btn active">2D SVG 視圖</button>
+                        <button id="tab2D" class="tab-btn active">2D 圖形視圖</button>
                         <button id="tab3D" class="tab-btn">3D 刀路預覽</button>
                     </div>
                 </div>
@@ -51,8 +51,9 @@
                         <polyline points="17 8 12 3 7 8"></polyline>
                         <line x1="12" y1="3" x2="12" y2="15"></line>
                     </svg>
-                    <h3>將 SVG 檔案拖曳至此</h3 <p>或點擊以選擇檔案</p>
-                    <input type="file" id="fileInput" accept=".svg" hidden>
+                    <h3>將 SVG / DXF 檔案拖曳至此</h3>
+                    <p>或點擊以選擇檔案</p>
+                    <input type="file" id="fileInput" accept=".svg,.dxf" hidden>
                 </div>
 
                 <div class="svg-preview-container">
@@ -255,7 +256,7 @@
 
                 <div class="console-log">
                     <div class="log-header">系統訊息日誌</div>
-                    <pre id="logText">等待載入 SVG 檔案...</pre>
+                    <pre id="logText">等待載入 SVG / DXF 檔案...</pre>
                 </div>
             </div>
         </div>
