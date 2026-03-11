@@ -752,41 +752,370 @@ export function profileTangentHullOps({
     return lines;
 }
 
+function flattenPathMoves(startPoint, moves, stepMm = 0.5) {
+    const points = [{ x: startPoint.x, y: startPoint.y }];
+    let cur = { x: startPoint.x, y: startPoint.y };
+
+    const pushPoint = (pt) => {
+        const last = points[points.length - 1];
+        if (!last || Math.hypot(last.x - pt.x, last.y - pt.y) > 1e-6) {
+            points.push({ x: pt.x, y: pt.y });
+        }
+    };
+
+    for (const move of moves) {
+        if (move.type === 'arc' && move.center && Number.isFinite(move.radius) && move.radius > 1e-9) {
+            const cx = move.center.x;
+            const cy = move.center.y;
+            const r = move.radius;
+            const a1 = Math.atan2(cur.y - cy, cur.x - cx);
+            const a2 = Math.atan2(move.to.y - cy, move.to.x - cx);
+            let sweep = move.clockwise ? (a1 - a2) : (a2 - a1);
+            if (sweep < 0) sweep += Math.PI * 2;
+            const segCount = Math.max(2, Math.min(720, Math.ceil((r * sweep) / stepMm)));
+            const dir = move.clockwise ? -1 : 1;
+
+            for (let i = 1; i <= segCount; i++) {
+                const t = i / segCount;
+                const a = a1 + dir * sweep * t;
+                pushPoint({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) });
+            }
+            points[points.length - 1] = { x: move.to.x, y: move.to.y };
+        } else {
+            pushPoint(move.to);
+        }
+        cur = { x: move.to.x, y: move.to.y };
+    }
+
+    return points;
+}
+
+function computePolygonArea(points) {
+    let area = 0;
+    for (let i = 0; i < points.length - 1; i++) {
+        const p1 = points[i];
+        const p2 = points[i + 1];
+        area += (p1.x * p2.y - p2.x * p1.y);
+    }
+    return area / 2;
+}
+
+function normalizeOffsetPoints(points) {
+    if (!points || points.length < 2) return points || [];
+
+    const filtered = [];
+    for (const pt of points) {
+        const last = filtered[filtered.length - 1];
+        if (!last || Math.hypot(last.x - pt.x, last.y - pt.y) > 1e-6) {
+            filtered.push({ x: pt.x, y: pt.y });
+        }
+    }
+
+    if (filtered.length < 2) return filtered;
+
+    const isClosed = Math.hypot(filtered[0].x - filtered[filtered.length - 1].x, filtered[0].y - filtered[filtered.length - 1].y) < 1e-6;
+    if (isClosed) {
+        filtered[filtered.length - 1] = { ...filtered[0] };
+    }
+
+    return filtered;
+}
+
+function getLeftNormal(p1, p2) {
+    const dx = p2.x - p1.x;
+    const dy = p2.y - p1.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-9) return { nx: 0, ny: 0 };
+    return { nx: -dy / len, ny: dx / len };
+}
+
+function intersectLineLine(a1, a2, b1, b2) {
+    const dax = a2.x - a1.x;
+    const day = a2.y - a1.y;
+    const dbx = b2.x - b1.x;
+    const dby = b2.y - b1.y;
+    const denom = dax * dby - day * dbx;
+    if (Math.abs(denom) < 1e-9) return null;
+
+    const t = ((b1.x - a1.x) * dby - (b1.y - a1.y) * dbx) / denom;
+    return { x: a1.x + dax * t, y: a1.y + day * t };
+}
+
+function intersectLineCircle(line, circle, hint) {
+    const dx = line.p2.x - line.p1.x;
+    const dy = line.p2.y - line.p1.y;
+    const fx = line.p1.x - circle.center.x;
+    const fy = line.p1.y - circle.center.y;
+
+    const a = dx * dx + dy * dy;
+    const b = 2 * (fx * dx + fy * dy);
+    const c = fx * fx + fy * fy - circle.radius * circle.radius;
+    const disc = b * b - 4 * a * c;
+    if (disc < -1e-9 || a < 1e-9) return null;
+
+    const roots = [];
+    if (Math.abs(disc) < 1e-9) {
+        roots.push(-b / (2 * a));
+    } else {
+        const s = Math.sqrt(Math.max(0, disc));
+        roots.push((-b - s) / (2 * a), (-b + s) / (2 * a));
+    }
+
+    const points = roots.map(t => ({ x: line.p1.x + dx * t, y: line.p1.y + dy * t }));
+    if (!points.length) return null;
+    if (points.length === 1) return points[0];
+
+    return points.reduce((best, pt) => {
+        const bestDist = Math.hypot(best.x - hint.x, best.y - hint.y);
+        const dist = Math.hypot(pt.x - hint.x, pt.y - hint.y);
+        return dist < bestDist ? pt : best;
+    });
+}
+
+function intersectCircleCircle(a, b, hint) {
+    const dx = b.center.x - a.center.x;
+    const dy = b.center.y - a.center.y;
+    const d = Math.hypot(dx, dy);
+    if (d < 1e-9) return null;
+    if (d > a.radius + b.radius + 1e-6) return null;
+    if (d < Math.abs(a.radius - b.radius) - 1e-6) return null;
+
+    const aa = (a.radius * a.radius - b.radius * b.radius + d * d) / (2 * d);
+    const hSq = a.radius * a.radius - aa * aa;
+    if (hSq < -1e-6) return null;
+    const h = Math.sqrt(Math.max(0, hSq));
+
+    const xm = a.center.x + (aa * dx) / d;
+    const ym = a.center.y + (aa * dy) / d;
+
+    const rx = -dy * (h / d);
+    const ry = dx * (h / d);
+
+    const p1 = { x: xm + rx, y: ym + ry };
+    const p2 = { x: xm - rx, y: ym - ry };
+    if (Math.hypot(p1.x - p2.x, p1.y - p2.y) < 1e-6) return p1;
+
+    return Math.hypot(p1.x - hint.x, p1.y - hint.y) <= Math.hypot(p2.x - hint.x, p2.y - hint.y) ? p1 : p2;
+}
+
+function fallbackJoinPoint(prevPrimitive, nextPrimitive, hint) {
+    if (prevPrimitive.type === 'line' || nextPrimitive.type === 'line') {
+        const line = prevPrimitive.type === 'line' ? prevPrimitive : nextPrimitive;
+        const dx = line.p2.x - line.p1.x;
+        const dy = line.p2.y - line.p1.y;
+        const lenSq = dx * dx + dy * dy;
+        if (lenSq > 1e-9) {
+            const t = ((hint.x - line.p1.x) * dx + (hint.y - line.p1.y) * dy) / lenSq;
+            return { x: line.p1.x + dx * t, y: line.p1.y + dy * t };
+        }
+    }
+
+    if (prevPrimitive.type === 'arc' || nextPrimitive.type === 'arc') {
+        const arc = prevPrimitive.type === 'arc' ? prevPrimitive : nextPrimitive;
+        const vx = hint.x - arc.center.x;
+        const vy = hint.y - arc.center.y;
+        const len = Math.hypot(vx, vy);
+        if (len > 1e-9) {
+            return {
+                x: arc.center.x + (vx / len) * arc.radius,
+                y: arc.center.y + (vy / len) * arc.radius
+            };
+        }
+    }
+
+    return { x: hint.x, y: hint.y };
+}
+
+function intersectOffsetPrimitives(prevPrimitive, nextPrimitive, hint) {
+    let pt = null;
+    if (prevPrimitive.type === 'line' && nextPrimitive.type === 'line') {
+        pt = intersectLineLine(prevPrimitive.p1, prevPrimitive.p2, nextPrimitive.p1, nextPrimitive.p2);
+    } else if (prevPrimitive.type === 'line' && nextPrimitive.type === 'arc') {
+        pt = intersectLineCircle(prevPrimitive, nextPrimitive, hint);
+    } else if (prevPrimitive.type === 'arc' && nextPrimitive.type === 'line') {
+        pt = intersectLineCircle(nextPrimitive, prevPrimitive, hint);
+    } else if (prevPrimitive.type === 'arc' && nextPrimitive.type === 'arc') {
+        pt = intersectCircleCircle(prevPrimitive, nextPrimitive, hint);
+    }
+
+    return pt || fallbackJoinPoint(prevPrimitive, nextPrimitive, hint);
+}
+
+function getPrimitiveVertexOffset(seg, primitive, vertex, sideSign, offsetMag) {
+    if (primitive.type === 'line') {
+        const normal = getLeftNormal(seg.from, seg.to);
+        return {
+            x: vertex.x + normal.nx * sideSign * offsetMag,
+            y: vertex.y + normal.ny * sideSign * offsetMag
+        };
+    }
+
+    if (primitive.type === 'arc' && seg.center && Number.isFinite(seg.radius)) {
+        const vx = vertex.x - seg.center.x;
+        const vy = vertex.y - seg.center.y;
+        const len = Math.hypot(vx, vy);
+        if (len > 1e-9) {
+            const radiusShift = sideSign * (seg.clockwise ? offsetMag : -offsetMag);
+            const nextRadius = seg.radius + radiusShift;
+            return {
+                x: seg.center.x + (vx / len) * nextRadius,
+                y: seg.center.y + (vy / len) * nextRadius
+            };
+        }
+    }
+
+    return null;
+}
+
+function computeJoinPointAtVertex(prevSeg, prevPrimitive, nextSeg, nextPrimitive, vertex, sideSign, offsetMag) {
+    const prevCandidate = getPrimitiveVertexOffset(prevSeg, prevPrimitive, vertex, sideSign, offsetMag);
+    const nextCandidate = getPrimitiveVertexOffset(nextSeg, nextPrimitive, vertex, sideSign, offsetMag);
+
+    if (prevCandidate && nextCandidate) {
+        const gap = Math.hypot(prevCandidate.x - nextCandidate.x, prevCandidate.y - nextCandidate.y);
+        if (gap < 0.05) {
+            return {
+                x: (prevCandidate.x + nextCandidate.x) / 2,
+                y: (prevCandidate.y + nextCandidate.y) / 2
+            };
+        }
+    }
+
+    return intersectOffsetPrimitives(prevPrimitive, nextPrimitive, vertex);
+}
+
+function computeArcSweep(from, to, center, clockwise) {
+    const a1 = Math.atan2(from.y - center.y, from.x - center.x);
+    const a2 = Math.atan2(to.y - center.y, to.x - center.x);
+    let sweep = clockwise ? (a1 - a2) : (a2 - a1);
+    if (sweep < 0) sweep += Math.PI * 2;
+    return sweep;
+}
+
+export function offsetClosedPathMoves(startPoint, moves, offsetDist) {
+    if (!startPoint || !moves || moves.length < 2 || !Number.isFinite(offsetDist) || Math.abs(offsetDist) < 1e-9) {
+        return null;
+    }
+
+    const segments = [];
+    let cur = { x: startPoint.x, y: startPoint.y };
+    for (const move of moves) {
+        const seg = { ...move, from: { ...cur }, to: { ...move.to } };
+        segments.push(seg);
+        cur = { x: move.to.x, y: move.to.y };
+    }
+
+    const last = segments[segments.length - 1];
+    const isClosed = Math.hypot(last.to.x - startPoint.x, last.to.y - startPoint.y) < 0.01;
+    if (!isClosed) return null;
+
+    const flatPoints = flattenPathMoves(startPoint, moves, 0.5);
+    const area = computePolygonArea(flatPoints);
+    const isCW = area < 0;
+    const sideSign = (offsetDist >= 0 ? 1 : -1) * (isCW ? 1 : -1); // +1 = left, -1 = right
+    const offsetMag = Math.abs(offsetDist);
+
+    const primitives = segments.map(seg => {
+        if (seg.type === 'arc' && seg.center && Number.isFinite(seg.radius)) {
+            const radiusShift = sideSign * (seg.clockwise ? offsetMag : -offsetMag);
+            const nextRadius = seg.radius + radiusShift;
+            if (!Number.isFinite(nextRadius) || nextRadius <= 1e-6) {
+                return null;
+            }
+            return {
+                type: 'arc',
+                center: { ...seg.center },
+                radius: nextRadius,
+                clockwise: seg.clockwise,
+                originalSweep: computeArcSweep(seg.from, seg.to, seg.center, seg.clockwise)
+            };
+        }
+
+        const normal = getLeftNormal(seg.from, seg.to);
+        const ox = normal.nx * sideSign * offsetMag;
+        const oy = normal.ny * sideSign * offsetMag;
+        return {
+            type: 'line',
+            p1: { x: seg.from.x + ox, y: seg.from.y + oy },
+            p2: { x: seg.to.x + ox, y: seg.to.y + oy }
+        };
+    });
+
+    if (primitives.some(p => !p)) return null;
+
+    const joinPoints = [];
+    for (let i = 0; i < segments.length; i++) {
+        const prevIdx = (i - 1 + segments.length) % segments.length;
+        joinPoints[i] = computeJoinPointAtVertex(
+            segments[prevIdx],
+            primitives[prevIdx],
+            segments[i],
+            primitives[i],
+            segments[prevIdx].to,
+            sideSign,
+            offsetMag
+        );
+    }
+
+    const offsetMoves = [];
+    for (let i = 0; i < segments.length; i++) {
+        const startPointForMove = joinPoints[i];
+        const endPoint = joinPoints[(i + 1) % segments.length];
+        const primitive = primitives[i];
+        if (primitive.type === 'arc') {
+            const cwSweep = computeArcSweep(startPointForMove, endPoint, primitive.center, true);
+            const ccwSweep = computeArcSweep(startPointForMove, endPoint, primitive.center, false);
+            const clockwise = Math.abs(cwSweep - primitive.originalSweep) <= Math.abs(ccwSweep - primitive.originalSweep);
+            offsetMoves.push({
+                type: 'arc',
+                to: { ...endPoint },
+                center: { ...primitive.center },
+                radius: primitive.radius,
+                clockwise
+            });
+        } else {
+            offsetMoves.push({
+                type: 'line',
+                to: { ...endPoint }
+            });
+        }
+    }
+
+    return {
+        startPoint: { ...joinPoints[0] },
+        moves: offsetMoves,
+        points: flattenPathMoves(joinPoints[0], offsetMoves, 0.5)
+    };
+}
+
 export function offsetPath(points, offsetDist) {
     if (!points || points.length < 2 || offsetDist === 0) return points;
+
+    points = normalizeOffsetPoints(points);
+    if (points.length < 2) return points;
 
     const result = [];
     const n = points.length;
     // Check if closed
     const isClosed = Math.abs(points[0].x - points[n - 1].x) < 0.001 && Math.abs(points[0].y - points[n - 1].y) < 0.001;
 
-    // Calculate signed polygon area to determine winding (CW vs CCW)
-    let area = 0;
-    for (let i = 0; i < n; i++) {
-        let p1 = points[i];
-        let p2 = points[(i + 1) % n];
-        area += (p1.x * p2.y - p2.x * p1.y);
-    }
-    // In SVG (Y down), positive area means Clockwise. 
-    const isCW = area > 0;
+    // Points are already in CNC space (Y up), so negative area means clockwise.
+    const area = computePolygonArea(isClosed ? points : [...points, points[0]]);
+    const isCW = area < 0;
 
-    // Helper: get normal vector of segment (p1 -> p2)
     const getNormal = (p1, p2) => {
         let dx = p2.x - p1.x;
         let dy = p2.y - p1.y;
         let len = Math.hypot(dx, dy);
         if (len === 0) return { nx: 0, ny: 0 };
 
-        // If CW, the "Outside" of the shape is on the LEFT of the directed edge.
-        // If CCW, the "Outside" is on the RIGHT.
-        // offsetDist > 0 means Outside. 
         if (isCW) {
-            // Left Normal: (dy, -dx)
-            return { nx: dy / len, ny: -dx / len };
-        } else {
-            // Right Normal: (-dy, dx)
-            return { nx: -dy / len, ny: dx / len };
+            const left = getLeftNormal(p1, p2);
+            return left;
         }
+
+        const left = getLeftNormal(p1, p2);
+        return { nx: -left.nx, ny: -left.ny };
     };
 
     // Calculate normals for each segment

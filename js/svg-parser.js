@@ -636,8 +636,8 @@ export function parseSVG(svgText) {
             if (move.center) {
                 const tc = applyMatrixPt(move.center, matrix);
                 newMove.center = { x: tc.x * svgToMm, y: -tc.y * svgToMm };
-                // When Y is flipped, arc direction reverses
-                newMove.clockwise = !move.clockwise;
+                // Preserve the intended geometric sweep after transforming into CNC space.
+                newMove.clockwise = move.clockwise;
                 newMove.radius = move.radius * svgToMm;
             }
             // If there's rotation in the transform, demote arcs to lines

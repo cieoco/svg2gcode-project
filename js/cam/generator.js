@@ -10,7 +10,8 @@ import {
     profileCircleOps,
     profilePathOps,
     profileTangentHullOps,
-    offsetPath
+    offsetPath,
+    offsetClosedPathMoves
 } from './operations.js';
 
 /**
@@ -151,14 +152,21 @@ export function buildPartGcode(part, mfg) {
             ...profilePathOps({ points: offsetted, safeZ, cutDepth, stepdown, feedXY, feedZ, tabWidth, tabCount, tabZ })
         );
     } else if (part.barStyle === 'path' && part.points) {
-        const offsetted = offsetDist !== 0 ? offsetPath(part.points, offsetDist) : part.points;
-        // If offset is applied, we can't use the typed moves (they'd be misaligned)
-        const useMoves = offsetDist === 0 && part.moves && part.moves.length > 0;
+        const offsetTyped = offsetDist !== 0 && part.moves && part.moves.length > 0 && part.startPoint
+            ? offsetClosedPathMoves(part.startPoint, part.moves, offsetDist)
+            : null;
+        const offsetted = offsetTyped
+            ? offsetTyped.points
+            : (offsetDist !== 0 ? offsetPath(part.points, offsetDist) : part.points);
+        const useMoves = Boolean(
+            offsetTyped ||
+            (offsetDist === 0 && part.moves && part.moves.length > 0)
+        );
         lines.push(
             ...profilePathOps({
                 points: offsetted,
-                moves: useMoves ? part.moves : undefined,
-                startPoint: useMoves ? part.startPoint : undefined,
+                moves: useMoves ? (offsetTyped ? offsetTyped.moves : part.moves) : undefined,
+                startPoint: useMoves ? (offsetTyped ? offsetTyped.startPoint : part.startPoint) : undefined,
                 safeZ, cutDepth, stepdown, feedXY, feedZ, tabWidth, tabCount, tabZ
             })
         );
