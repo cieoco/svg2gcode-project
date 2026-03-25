@@ -4,6 +4,17 @@
 
 🌐 **線上版本 / Live Demo**：[https://cieoco.github.io/svg2gcode-project/](https://cieoco.github.io/svg2gcode-project/)
 
+## 與整體工作流的關係
+
+- `cad`
+  - 畫 2D 零件，輸出 `svg`
+- `arm`
+  - 做 3D 組裝與模擬
+- `linkage`
+  - 做閉環機構拓樸與零件配置
+- `svg2gcode-project`
+  - 專心處理 CAM 與 G-code，不負責機構求解或 3D 手臂模擬
+
 ---
 
 ## 中文說明
