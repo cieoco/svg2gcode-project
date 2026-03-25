@@ -202,6 +202,7 @@ export function update3DToolpath(gcodeText, mfg) {
     let x = 0, y = 0, z = mfg.safeZ || 5;
     let minX = Infinity, maxX = -Infinity;
     let minY = Infinity, maxY = -Infinity;
+    let minCutZ = Infinity;
 
     animationPoints = [];
     pathLengths = [];
@@ -286,6 +287,7 @@ export function update3DToolpath(gcodeText, mfg) {
                     totalPathLength += dist;
                     animationPoints.push({ p: pt, isRapid: false });
                     pathLengths.push(totalPathLength);
+                    if (az < minCutZ) minCutZ = az;
 
                     if (ax < minX) minX = ax;
                     if (ax > maxX) maxX = ax;
@@ -299,6 +301,9 @@ export function update3DToolpath(gcodeText, mfg) {
                 totalPathLength += dist;
                 animationPoints.push({ p: pt, isRapid });
                 pathLengths.push(totalPathLength);
+                if (!isRapid) {
+                    minCutZ = Math.min(minCutZ, z, newZ);
+                }
             }
 
             x = newX; y = newY; z = newZ;
@@ -313,13 +318,14 @@ export function update3DToolpath(gcodeText, mfg) {
         const d = (mfg.thickness || 3) + 0.1;
         const cx = (minX + maxX) / 2;
         const cy = (minY + maxY) / 2;
+        const stockBottomZ = Number.isFinite(minCutZ) ? minCutZ : -d;
 
         const boxGeo = new THREE.BoxGeometry(w, h, d);
         const edges = new THREE.EdgesGeometry(boxGeo);
-        const boxMat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.15 });
-        const boxMesh = new THREE.LineSegments(edges, boxMat);
-        boxMesh.position.set(cx, cy, -d / 2);
-        toolpathGroup.add(boxMesh);
+        const edgeMat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.15 });
+        const edgeMesh = new THREE.LineSegments(edges, edgeMat);
+        edgeMesh.position.set(cx, cy, stockBottomZ + d / 2);
+        toolpathGroup.add(edgeMesh);
 
         // Auto-frame camera to fit the bounding box
         const diag = Math.sqrt(w * w + h * h);
