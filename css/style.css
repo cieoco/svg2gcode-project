@@ -235,7 +235,7 @@ body {
     stroke-width: 1.5px;
     vector-effect: non-scaling-stroke;
     fill: transparent !important;
-    pointer-events: all;
+    pointer-events: visibleStroke;
     transition: stroke 0.2s, stroke-width 0.2s;
     cursor: pointer;
 }
