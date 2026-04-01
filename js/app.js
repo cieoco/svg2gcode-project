@@ -47,6 +47,8 @@ rotateAngle.addEventListener('input', (e) => {
 });
 
 let currentParts = null;
+let isDraggingSvg = false;
+let cleanupPreviewInteractions = null;
 
 // Init 3D View
 init3DViewer('preview3D');
@@ -184,6 +186,10 @@ function buildPartsPreviewSvg(parts) {
 function processFile(file) {
     log(`正在載入 ${file.name}...`);
     refreshPreviewTransform = null;
+    if (typeof cleanupPreviewInteractions === 'function') {
+        cleanupPreviewInteractions();
+        cleanupPreviewInteractions = null;
+    }
     const svgFile = isSvgFile(file);
     const dxfFile = isDxfFile(file);
     if (!svgFile && !dxfFile) {
@@ -227,7 +233,58 @@ function processFile(file) {
     reader.readAsText(file);
 }
 
+function getSelectedToolpathMode() {
+    const selectedModeRadio = document.querySelector('input[name="toolpathMode"]:checked');
+    return selectedModeRadio ? selectedModeRadio.value : 'on-path';
+}
+
+function getModeName(selectedMode) {
+    if (selectedMode === 'outside') return '銑線外';
+    if (selectedMode === 'inside') return '銑線內';
+    if (selectedMode === 'drill') return '鑽孔';
+    if (selectedMode === 'on-path') return '銑線上';
+    return '不加工';
+}
+
+function syncPreviewPartClasses() {
+    const elements = previewSvg.querySelectorAll('[data-part-id]');
+    elements.forEach((el) => {
+        const part = currentParts?.find((item) => item.id === el.dataset.partId);
+        if (!part) return;
+        el.classList.remove('path-on-path', 'path-outside', 'path-inside', 'path-drill', 'path-none');
+        el.classList.add(`path-${part.toolpathMode || 'none'}`);
+    });
+}
+
+function applyToolpathModeToPartIds(partIds, selectedMode) {
+    if (!currentParts || !Array.isArray(partIds) || partIds.length === 0) return 0;
+    const targetIds = new Set(partIds);
+    let changedCount = 0;
+
+    currentParts.forEach((part) => {
+        if (!targetIds.has(part.id)) return;
+        part.toolpathMode = selectedMode;
+        if (!part.listOrdered) {
+            part.listOrdered = true;
+        }
+        changedCount += 1;
+    });
+
+    currentParts = [
+        ...currentParts.filter((part) => part.listOrdered),
+        ...currentParts.filter((part) => !part.listOrdered)
+    ];
+    syncPreviewPartClasses();
+    renderToolpathList();
+    return changedCount;
+}
+
 function setupSvgInteractions(parts) {
+    if (typeof cleanupPreviewInteractions === 'function') {
+        cleanupPreviewInteractions();
+        cleanupPreviewInteractions = null;
+    }
+
     const svgEl = previewSvg.querySelector('svg');
     if (!svgEl) return;
 
@@ -247,117 +304,127 @@ function setupSvgInteractions(parts) {
 
             el.addEventListener('click', (e) => {
                 e.stopPropagation();
-                // Ignore click if we were dragging
                 if (isDraggingSvg) return;
-
-                // Get selected toolpath mode from radio buttons
-                const selectedModeRadio = document.querySelector('input[name="toolpathMode"]:checked');
-                const selectedMode = selectedModeRadio ? selectedModeRadio.value : 'on-path';
-
-                // Find matching part by ID
-                const partIndex = currentParts.findIndex(p => p.id === el.dataset.partId);
-                if (partIndex !== -1) {
-                    // Update part data
-                    currentParts[partIndex].toolpathMode = selectedMode;
-
-                    // Click-to-order logic: first clicked -> #1, second -> #2, etc.
-                    if (!currentParts[partIndex].listOrdered) {
-                        const [movedPart] = currentParts.splice(partIndex, 1);
-                        movedPart.listOrdered = true;
-
-                        // Insert after the last ordered part
-                        const insertIndex = currentParts.findIndex(p => !p.listOrdered);
-                        if (insertIndex === -1) {
-                            currentParts.push(movedPart); // all others are ordered, put at end
-                        } else {
-                            currentParts.splice(insertIndex, 0, movedPart);
-                        }
-                    }
-
-                    // Update CSS class
-                    el.classList.remove('path-on-path', 'path-outside', 'path-inside', 'path-drill', 'path-none');
-                    el.classList.add(`path-${selectedMode}`);
-
-                    // Re-find index to log the correct new position
-                    const newIndex = currentParts.findIndex(p => p.id === el.dataset.partId);
-
-                    let modeName = '不加工';
-                    if (selectedMode === 'outside') modeName = '銑線外';
-                    if (selectedMode === 'inside') modeName = '銑線內';
-                    if (selectedMode === 'drill') modeName = '鑽孔';
-                    if (selectedMode === 'on-path') modeName = '銑線上';
-
-                    log(`已將路徑 #${newIndex + 1} 設為 ${modeName}。`);
-
-                    // Re-render toolpath list to update badges and order
-                    renderToolpathList();
+                const selectedMode = getSelectedToolpathMode();
+                const changedCount = applyToolpathModeToPartIds([el.dataset.partId], selectedMode);
+                if (changedCount > 0) {
+                    const newIndex = currentParts.findIndex((part) => part.id === el.dataset.partId);
+                    log(`已將路徑 #${newIndex + 1} 設為 ${getModeName(selectedMode)}。`);
                 }
             });
         }
     });
 
-    // Implement Pan and Zoom
     let scale = 1;
-    let panX = 0;
-    let panY = 0;
-    let isDragging = false;
-    let startX = 0;
-    let startY = 0;
+    let dragState = null;
 
-    // Use a wrapper or transform the SVG directly? 
-    // It's safer to transform the SVG element itself.
+    const selectionBox = document.createElement('div');
+    selectionBox.className = 'selection-box';
+    selectionBox.hidden = true;
+    previewSvg.appendChild(selectionBox);
+
     svgEl.style.transformOrigin = 'center center';
     const getRotateDeg = () => (parseFloat(rotateAngle.value) || 0);
 
     function updateTransform(animate = false) {
         const rot = getRotateDeg();
         svgEl.style.transition = animate ? 'transform 0.2s ease-in-out' : 'none';
-        svgEl.style.transform = `translate(${panX}px, ${panY}px) scale(${scale}) rotate(${rot}deg)`;
+        svgEl.style.transform = `scale(${scale}) rotate(${rot}deg)`;
     }
     refreshPreviewTransform = (animate = false) => updateTransform(animate);
 
     // Zoom (Mouse Wheel)
-    previewSvg.addEventListener('wheel', (e) => {
+    const handleWheel = (e) => {
         e.preventDefault();
         const zoomDelta = e.deltaY > 0 ? 0.9 : 1.1;
         scale *= zoomDelta;
-        // Limit zoom
         scale = Math.max(0.1, Math.min(scale, 10));
         updateTransform(false);
-    }, { passive: false });
+    };
+    previewSvg.addEventListener('wheel', handleWheel, { passive: false });
 
-    // Pan (Mouse Drag)
-    previewSvg.addEventListener('mousedown', (e) => {
-        // Only pan on left click background (not on the path if we want to click path)
-        // Wait, to allow both: click on path selects it, drag pans.
-        isDragging = true;
+    const handleMouseDown = (e) => {
+        if (e.button !== 0) return;
+        const rect = previewSvg.getBoundingClientRect();
+        dragState = {
+            startX: e.clientX - rect.left,
+            startY: e.clientY - rect.top,
+            selecting: false
+        };
         isDraggingSvg = false;
-        startX = e.clientX - panX;
-        startY = e.clientY - panY;
-        previewSvg.style.cursor = 'grabbing';
-    });
+        previewSvg.style.cursor = 'crosshair';
+    };
+    previewSvg.addEventListener('mousedown', handleMouseDown);
 
-    window.addEventListener('mousemove', (e) => {
-        if (!isDragging) return;
-        isDraggingSvg = true; // Flage to prevent click event on paths
-        panX = e.clientX - startX;
-        panY = e.clientY - startY;
-        updateTransform(false);
-    });
+    const handleMouseMove = (e) => {
+        if (!dragState) return;
+        const rect = previewSvg.getBoundingClientRect();
+        const currentX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
+        const currentY = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
+        const dx = currentX - dragState.startX;
+        const dy = currentY - dragState.startY;
+        if (!dragState.selecting && Math.hypot(dx, dy) < 6) {
+            return;
+        }
+        dragState.selecting = true;
+        isDraggingSvg = true;
+        const left = Math.min(dragState.startX, currentX);
+        const top = Math.min(dragState.startY, currentY);
+        selectionBox.hidden = false;
+        selectionBox.style.left = `${left}px`;
+        selectionBox.style.top = `${top}px`;
+        selectionBox.style.width = `${Math.abs(dx)}px`;
+        selectionBox.style.height = `${Math.abs(dy)}px`;
+    };
+    window.addEventListener('mousemove', handleMouseMove);
 
-    window.addEventListener('mouseup', () => {
-        isDragging = false;
+    const handleMouseUp = () => {
+        if (!dragState) return;
         previewSvg.style.cursor = 'default';
-        // Reset the drag flag slightly after to allow click events to complete
-        setTimeout(() => isDraggingSvg = false, 50);
-    });
+        if (dragState.selecting && !selectionBox.hidden) {
+            const boxRect = selectionBox.getBoundingClientRect();
+            const selectedIds = [];
+            elements.forEach((el) => {
+                const rect = el.getBoundingClientRect();
+                const fullyContained = rect.left >= boxRect.left &&
+                    rect.right <= boxRect.right &&
+                    rect.top >= boxRect.top &&
+                    rect.bottom <= boxRect.bottom;
+                if (fullyContained && el.dataset.partId) {
+                    selectedIds.push(el.dataset.partId);
+                }
+            });
+            if (selectedIds.length > 0) {
+                const selectedMode = getSelectedToolpathMode();
+                const changedCount = applyToolpathModeToPartIds(selectedIds, selectedMode);
+                if (changedCount > 0) {
+                    log(`已將 ${changedCount} 個路徑設為 ${getModeName(selectedMode)}。`);
+                }
+            }
+        }
+        selectionBox.hidden = true;
+        dragState = null;
+        setTimeout(() => {
+            isDraggingSvg = false;
+        }, 50);
+    };
+    window.addEventListener('mouseup', handleMouseUp);
 
-    // Initial reset
     updateTransform(false);
-}
 
-// Global flag to prevent click after drag
-let isDraggingSvg = false;
+    cleanupPreviewInteractions = () => {
+        previewSvg.removeEventListener('wheel', handleWheel);
+        previewSvg.removeEventListener('mousedown', handleMouseDown);
+        window.removeEventListener('mousemove', handleMouseMove);
+        window.removeEventListener('mouseup', handleMouseUp);
+        previewSvg.style.cursor = 'default';
+        if (selectionBox.isConnected) {
+            selectionBox.remove();
+        }
+        dragState = null;
+        isDraggingSvg = false;
+    };
+}
 
 // Helper: Save current settings to localStorage
 function saveMfgData(mfg) {
