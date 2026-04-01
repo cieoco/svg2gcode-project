@@ -106,6 +106,14 @@
                                     <polygon points="5 3 19 12 5 21 5 3"></polygon>
                                 </svg>
                             </button>
+                            <button id="btnResetView" class="ctrl-btn" title="回到原始視角">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M12 3l7 4v10l-7 4-7-4V7l7-4z"></path>
+                                    <path d="M12 8v8"></path>
+                                    <path d="M8.5 10 12 8l3.5 2"></path>
+                                </svg>
+                            </button>
                             <button id="btnReset" class="ctrl-btn" title="重置回放">
                                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                     stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -136,11 +144,13 @@
             </div>
 
             <!-- Right Side: Settings -->
-            <div class="settings-section pane">
-                <div class="section-header">
+            <div class="settings-section pane collapsible-panel">
+                <div class="section-header panel-header">
                     <h2>CAM 加工參數</h2>
+                    <button type="button" class="panel-toggle-btn" data-panel-toggle="camSettingsBody" aria-expanded="false" aria-label="展開 CAM 加工參數">+</button>
                 </div>
 
+                <div class="panel-content" id="camSettingsBody" hidden>
                 <div class="settings-kv">
                     <div class="kv-row">
                         <label class="kv-label" for="thickness">材料厚度 (mm)</label>
@@ -199,16 +209,21 @@
                         </select>
                     </div>
                 </div>
+                </div>
 
                 <!-- Tab / Bridge Settings -->
-                <div class="settings-section pane" style="margin-top: 15px; padding: 15px;">
-                    <div class="section-header" style="margin-bottom: 10px; display: flex; align-items: center; gap: 10px;">
-                        <h2 style="font-size: 1rem; margin: 0;">固定支撐橋 (Tabs / Bridges)</h2>
-                        <label style="display: flex; align-items: center; gap: 6px; font-size: 0.85rem; cursor: pointer; font-weight: 400;">
+                <div class="settings-section pane settings-subpanel collapsible-panel">
+                    <div class="section-header panel-header panel-header-inline">
+                        <h2 class="subpanel-title">固定支撐橋 (Tabs / Bridges)</h2>
+                        <div class="panel-header-actions">
+                        <label class="panel-inline-check">
                             <input type="checkbox" id="tabEnable" style="width:14px;height:14px;">
                             啟用
                         </label>
+                        <button type="button" class="panel-toggle-btn" data-panel-toggle="tabsPanelBody" aria-expanded="false" aria-label="展開固定支撐橋">+</button>
+                        </div>
                     </div>
+                    <div class="panel-content" id="tabsPanelBody" hidden>
                     <div id="tabSettings" style="display:none;">
                         <div class="settings-kv tab-kv">
                             <div class="kv-row">
@@ -225,16 +240,19 @@
                             </div>
                         </div>
                     </div>
+                    </div>
                 </div>
 
-                <div class="settings-section pane" style="margin-top: 15px; padding: 15px;">
-                    <div class="section-header" style="margin-bottom: 10px;">
-                        <h2 style="font-size: 1rem;">加工順序 (上下拖曳以排序)</h2>
+                <div class="settings-section pane settings-subpanel collapsible-panel">
+                    <div class="section-header panel-header">
+                        <h2 class="subpanel-title">加工順序 (上下拖曳以排序)</h2>
+                        <button type="button" class="panel-toggle-btn" data-panel-toggle="toolpathOrderBody" aria-expanded="false" aria-label="展開加工順序">+</button>
                     </div>
-                    <div class="toolpath-list-container" id="toolpathList"
-                        style="border: 1px solid var(--border); border-radius: 4px; padding: 5px; background: var(--surface);">
+                    <div class="panel-content" id="toolpathOrderBody" hidden>
+                    <div class="toolpath-list-container" id="toolpathList">
                         <div style="padding: 10px; color: var(--text-muted); text-align: center; font-size: 0.85rem;">
                             等待載入 SVG / DXF 檔案...</div>
+                    </div>
                     </div>
                 </div>
 

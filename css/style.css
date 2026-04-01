@@ -159,6 +159,68 @@ body {
     color: var(--text-main);
 }
 
+.panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+}
+
+.panel-header-inline {
+    align-items: center;
+}
+
+.panel-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-left: auto;
+}
+
+.panel-inline-check {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    font-weight: 400;
+    color: var(--text-main);
+}
+
+.panel-toggle-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text-main);
+    font-size: 1.1rem;
+    line-height: 1;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.panel-toggle-btn:hover {
+    border-color: var(--primary);
+    color: var(--primary);
+    background: rgba(0, 229, 255, 0.08);
+}
+
+.panel-content[hidden] {
+    display: none !important;
+}
+
+.settings-subpanel {
+    margin-top: 0.25rem;
+    padding: 1rem;
+    gap: 1rem;
+}
+
+.subpanel-title {
+    font-size: 1rem !important;
+    margin: 0;
+}
+
 /* Uploader */
 .upload-area {
     border: 2px dashed var(--border);
@@ -661,6 +723,13 @@ body.theme-light #logText {
 .toolpath-item .mode-badge.drill {
     background: rgba(245, 158, 11, 0.2);
     color: #f59e0b;
+}
+
+.toolpath-list-container {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px;
+    background: var(--surface);
 }
 
 @media (max-width: 1024px) {

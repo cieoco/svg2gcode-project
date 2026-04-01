@@ -6,7 +6,7 @@ import { parseSVG } from './svg-parser.js';
 import { parseDXF } from './dxf-parser.js';
 import { buildAllGcodes, generateMachiningInfo } from './cam/generator.js';
 import { gcodeHeader, gcodeFooter } from './cam/operations.js';
-import { init3DViewer, update3DToolpath, linkAnimationUI } from './viewer3d.js';
+import { init3DViewer, update3DToolpath, linkAnimationUI, reset3DView } from './viewer3d.js';
 
 // Elements
 const dropZone = document.getElementById('dropZone');
@@ -22,6 +22,7 @@ const preview3D = document.getElementById('preview3D');
 
 // Animation Controls
 const btnPlayPause = document.getElementById('btnPlayPause');
+const btnResetView = document.getElementById('btnResetView');
 const btnReset = document.getElementById('btnReset');
 const progressSlider = document.getElementById('progressSlider');
 const lblTime = document.getElementById('lblTime');
@@ -53,6 +54,11 @@ let cleanupPreviewInteractions = null;
 // Init 3D View
 init3DViewer('preview3D');
 linkAnimationUI(progressSlider, lblTime, lblProgress, btnPlayPause, speedSelect, btnReset);
+if (btnResetView) {
+    btnResetView.addEventListener('click', () => {
+        reset3DView();
+    });
+}
 
 tab2D.addEventListener('click', () => {
     tab2D.classList.add('active');
@@ -780,9 +786,32 @@ function renderToolpathList() {
     enforceToolpathListViewportLimit(list, 10);
 }
 
+function initCollapsiblePanels() {
+    const toggleButtons = document.querySelectorAll('[data-panel-toggle]');
+
+    const setExpanded = (button, expanded) => {
+        const targetId = button.dataset.panelToggle;
+        const panel = targetId ? document.getElementById(targetId) : null;
+        if (!panel) return;
+        button.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+        button.textContent = expanded ? '−' : '+';
+        panel.hidden = !expanded;
+    };
+
+    toggleButtons.forEach((button) => {
+        const expanded = button.getAttribute('aria-expanded') !== 'false';
+        setExpanded(button, expanded);
+        button.addEventListener('click', () => {
+            const nextExpanded = button.getAttribute('aria-expanded') !== 'true';
+            setExpanded(button, nextExpanded);
+        });
+    });
+}
+
 // --- Initialization ---
 document.addEventListener('DOMContentLoaded', () => {
     initTheme();
+    initCollapsiblePanels();
     if (themeSelect) {
         themeSelect.addEventListener('change', () => {
             applyTheme(themeSelect.value);

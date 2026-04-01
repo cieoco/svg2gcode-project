@@ -26,6 +26,8 @@ export function init3DViewer(containerId) {
     controls = new THREE.OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
+    controls.target.set(0, 0, 0);
+    controls.saveState();
 
     // Grid support
     const gridHelper = new THREE.GridHelper(300, 30, 0x444444, 0x222222);
@@ -125,6 +127,12 @@ export function linkAnimationUI(slider, lblTime, lblProg, btnPlay, selSpeed, btn
     selSpeed.addEventListener('change', (e) => {
         playbackSpeed = parseFloat(e.target.value);
     });
+}
+
+export function reset3DView() {
+    if (!controls) return;
+    controls.reset();
+    controls.update();
 }
 
 function updatePlayBtnState() {
@@ -334,6 +342,7 @@ export function update3DToolpath(gcodeText, mfg) {
         const camDist = (diag / 2) / Math.tan(fovRad / 2) * 1.2;
         controls.target.set(cx, cy, 0);
         camera.position.set(cx, cy - camDist * 0.6, camDist * 0.8);
+        controls.saveState();
         controls.update();
     }
 
