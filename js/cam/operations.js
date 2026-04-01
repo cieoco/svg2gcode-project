@@ -1065,7 +1065,11 @@ export function offsetClosedPathMoves(startPoint, moves, offsetDist) {
         if (primitive.type === 'arc') {
             const cwSweep = computeArcSweep(startPointForMove, endPoint, primitive.center, true);
             const ccwSweep = computeArcSweep(startPointForMove, endPoint, primitive.center, false);
-            const clockwise = Math.abs(cwSweep - primitive.originalSweep) <= Math.abs(ccwSweep - primitive.originalSweep);
+            const cwError = Math.abs(cwSweep - primitive.originalSweep);
+            const ccwError = Math.abs(ccwSweep - primitive.originalSweep);
+            const clockwise = Math.abs(cwError - ccwError) <= 1e-6
+                ? primitive.clockwise
+                : cwError < ccwError;
             offsetMoves.push({
                 type: 'arc',
                 to: { ...endPoint },
