@@ -211,10 +211,17 @@ export function buildAllGcodes(parts, mfg) {
 export function generateMachiningInfo(mfg, partCount) {
     const cutDepth = mfg.thickness + mfg.overcut;
     const layers = Math.max(1, Math.ceil(cutDepth / mfg.stepdown));
+    const arrayCountX = Math.max(1, Math.round(mfg.arrayCountX || 1));
+    const arrayCountY = Math.max(1, Math.round(mfg.arrayCountY || 1));
+    const totalCopies = arrayCountX * arrayCountY;
 
     const info = [];
     info.push(`加工參數摘要：`);
     info.push(`- 零件數量：${partCount}`);
+    if (totalCopies > 1) {
+        info.push(`- 陣列排列：X ${arrayCountX} 個，間距 ${mfg.arraySpacingX.toFixed(2)} mm；Y ${arrayCountY} 個，間距 ${mfg.arraySpacingY.toFixed(2)} mm`);
+        info.push(`- 陣列總副本數：${totalCopies}`);
+    }
     info.push(`- 材料厚度：${mfg.thickness.toFixed(2)} mm`);
     info.push(`- 總切深：${cutDepth.toFixed(2)} mm`);
     info.push(`- 每層下刀：${mfg.stepdown.toFixed(2)} mm`);

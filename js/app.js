@@ -50,6 +50,7 @@ rotateAngle.addEventListener('input', (e) => {
 let currentParts = null;
 let isDraggingSvg = false;
 let cleanupPreviewInteractions = null;
+let previewFlipY = false;
 
 // Init 3D View
 init3DViewer('preview3D');
@@ -150,43 +151,97 @@ function isDxfFile(file) {
     return name.endsWith('.dxf') || type.includes('dxf');
 }
 
-function buildPartsPreviewSvg(parts) {
+function getPreviewArraySettings() {
+    const readField = (id, fallback) => {
+        const input = document.getElementById(id);
+        if (!input) return fallback;
+        const value = parseFloat(input.value);
+        return Number.isFinite(value) ? value : fallback;
+    };
+
+    return {
+        xCount: Math.max(1, Math.round(readField('arrayCountX', 1))),
+        xSpacing: readField('arraySpacingX', 0),
+        yCount: Math.max(1, Math.round(readField('arrayCountY', 1))),
+        ySpacing: readField('arraySpacingY', 0)
+    };
+}
+
+function buildPartsPreviewSvg(parts, options = {}) {
     if (!parts || parts.length === 0) return '';
 
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    for (const p of parts) {
-        if (!p.points) continue;
-        for (const pt of p.points) {
-            if (pt.x < minX) minX = pt.x;
-            if (pt.x > maxX) maxX = pt.x;
-            if (pt.y < minY) minY = pt.y;
-            if (pt.y > maxY) maxY = pt.y;
+    const {
+        flipY = false,
+        xCount = 1,
+        xSpacing = 0,
+        yCount = 1,
+        ySpacing = 0
+    } = options;
+
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minDisplayY = Infinity;
+    let maxDisplayY = -Infinity;
+    const renderedPaths = [];
+
+    for (let row = 0; row < yCount; row++) {
+        for (let col = 0; col < xCount; col++) {
+            const offsetX = col * xSpacing;
+            const offsetY = row * ySpacing;
+
+            for (const part of parts) {
+                const pts = part.points || [];
+                if (pts.length < 2) continue;
+
+                const commands = [];
+                pts.forEach((point, index) => {
+                    const shiftedX = point.x + offsetX;
+                    const shiftedY = point.y + offsetY;
+                    const displayY = flipY ? -shiftedY : shiftedY;
+
+                    minX = Math.min(minX, shiftedX);
+                    maxX = Math.max(maxX, shiftedX);
+                    minDisplayY = Math.min(minDisplayY, displayY);
+                    maxDisplayY = Math.max(maxDisplayY, displayY);
+
+                    commands.push(`${index === 0 ? 'M' : 'L'} ${shiftedX.toFixed(4)} ${displayY.toFixed(4)}`);
+                });
+
+                const first = pts[0];
+                const last = pts[pts.length - 1];
+                const isClosed = Math.hypot(first.x - last.x, first.y - last.y) < 0.01;
+                if (isClosed) {
+                    commands.push('Z');
+                }
+
+                renderedPaths.push(`<path d="${commands.join(' ')}" data-source-part-id="${part.id}" class="path-${part.toolpathMode || 'none'}" fill="none"></path>`);
+            }
         }
     }
-    if (!Number.isFinite(minX) || !Number.isFinite(minY)) return '';
 
-    const w = Math.max(1e-6, maxX - minX);
-    const h = Math.max(1e-6, maxY - minY);
-    const pad = Math.max(2, Math.max(w, h) * 0.05);
+    if (!Number.isFinite(minX) || !Number.isFinite(minDisplayY)) return '';
 
-    // DXF is Y-up. SVG is Y-down, so preview uses y=-y to preserve CAD orientation.
-    const minYSvg = -maxY;
-    const viewBox = `${(minX - pad).toFixed(4)} ${(minYSvg - pad).toFixed(4)} ${(w + pad * 2).toFixed(4)} ${(h + pad * 2).toFixed(4)}`;
+    const width = Math.max(1e-6, maxX - minX);
+    const height = Math.max(1e-6, maxDisplayY - minDisplayY);
+    const pad = Math.max(2, Math.max(width, height) * 0.05);
+    const viewBox = `${(minX - pad).toFixed(4)} ${(minDisplayY - pad).toFixed(4)} ${(width + pad * 2).toFixed(4)} ${(height + pad * 2).toFixed(4)}`;
 
-    const paths = parts.map((part) => {
-        const pts = part.points || [];
-        if (pts.length < 2) return '';
-        const d = [];
-        d.push(`M ${pts[0].x.toFixed(4)} ${(-pts[0].y).toFixed(4)}`);
-        for (let i = 1; i < pts.length; i++) {
-            d.push(`L ${pts[i].x.toFixed(4)} ${(-pts[i].y).toFixed(4)}`);
-        }
-        const isClosed = Math.hypot(pts[0].x - pts[pts.length - 1].x, pts[0].y - pts[pts.length - 1].y) < 0.01;
-        if (isClosed) d.push('Z');
-        return `<path d="${d.join(' ')}" fill="none"></path>`;
-    }).join('');
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}" preserveAspectRatio="xMidYMid meet">${renderedPaths.join('')}</svg>`;
+}
 
-    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}" preserveAspectRatio="xMidYMid meet">${paths}</svg>`;
+function renderPreviewSvg() {
+    if (!currentParts || currentParts.length === 0) {
+        previewSvg.innerHTML = '';
+        return;
+    }
+
+    const arraySettings = getPreviewArraySettings();
+    previewSvg.innerHTML = buildPartsPreviewSvg(currentParts, {
+        flipY: previewFlipY,
+        ...arraySettings
+    });
+    setupSvgInteractions(currentParts);
+    syncPreviewPartClasses();
 }
 
 function processFile(file) {
@@ -209,12 +264,11 @@ function processFile(file) {
         try {
             const fileContent = e.target.result;
             if (svgFile) {
-                // Display original SVG
-                previewSvg.innerHTML = fileContent;
+                previewFlipY = false;
                 currentParts = await parseSVG(fileContent);
             } else {
+                previewFlipY = true;
                 currentParts = parseDXF(fileContent);
-                previewSvg.innerHTML = buildPartsPreviewSvg(currentParts);
             }
 
             currentParts.forEach((part, i) => {
@@ -225,8 +279,7 @@ function processFile(file) {
             log(`已從 ${sourceLabel} 成功解析出 ${currentParts.length} 個切削零件路徑。`);
             generateBtn.disabled = currentParts.length === 0;
 
-            // Make SVG elements interactive
-            setupSvgInteractions(currentParts);
+            renderPreviewSvg();
 
             // Render toolpath order list
             renderToolpathList();
@@ -253,9 +306,9 @@ function getModeName(selectedMode) {
 }
 
 function syncPreviewPartClasses() {
-    const elements = previewSvg.querySelectorAll('[data-part-id]');
+    const elements = previewSvg.querySelectorAll('[data-source-part-id]');
     elements.forEach((el) => {
-        const part = currentParts?.find((item) => item.id === el.dataset.partId);
+        const part = currentParts?.find((item) => item.id === el.dataset.sourcePartId);
         if (!part) return;
         el.classList.remove('path-on-path', 'path-outside', 'path-inside', 'path-drill', 'path-none');
         el.classList.add(`path-${part.toolpathMode || 'none'}`);
@@ -294,31 +347,26 @@ function setupSvgInteractions(parts) {
     const svgEl = previewSvg.querySelector('svg');
     if (!svgEl) return;
 
-    // Use querySelectorAll to get the paths in the same order as parsed
-    const shapes = ['path', 'rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon'];
-    const elements = svgEl.querySelectorAll(shapes.join(','));
+    const elements = svgEl.querySelectorAll('[data-source-part-id]');
 
-    // Assign index and click listener
-    elements.forEach((el, index) => {
-        if (index < parts.length) {
-            el.dataset.partId = parts[index].id;
-            // Set default mode
-            if (!parts[index].toolpathMode) {
-                parts[index].toolpathMode = 'none';
-                el.classList.add('path-none');
-            }
-
-            el.addEventListener('click', (e) => {
-                e.stopPropagation();
-                if (isDraggingSvg) return;
-                const selectedMode = getSelectedToolpathMode();
-                const changedCount = applyToolpathModeToPartIds([el.dataset.partId], selectedMode);
-                if (changedCount > 0) {
-                    const newIndex = currentParts.findIndex((part) => part.id === el.dataset.partId);
-                    log(`已將路徑 #${newIndex + 1} 設為 ${getModeName(selectedMode)}。`);
-                }
-            });
+    parts.forEach((part) => {
+        if (!part.toolpathMode) {
+            part.toolpathMode = 'none';
         }
+    });
+
+    elements.forEach((el) => {
+        el.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (isDraggingSvg) return;
+            const sourcePartId = el.dataset.sourcePartId;
+            const selectedMode = getSelectedToolpathMode();
+            const changedCount = applyToolpathModeToPartIds([sourcePartId], selectedMode);
+            if (changedCount > 0) {
+                const newIndex = currentParts.findIndex((part) => part.id === sourcePartId);
+                log(`已將路徑 #${newIndex + 1} 設為 ${getModeName(selectedMode)}。`);
+            }
+        });
     });
 
     let scale = 1;
@@ -389,20 +437,20 @@ function setupSvgInteractions(parts) {
         previewSvg.style.cursor = 'default';
         if (dragState.selecting && !selectionBox.hidden) {
             const boxRect = selectionBox.getBoundingClientRect();
-            const selectedIds = [];
+            const selectedIds = new Set();
             elements.forEach((el) => {
                 const rect = el.getBoundingClientRect();
                 const fullyContained = rect.left >= boxRect.left &&
                     rect.right <= boxRect.right &&
                     rect.top >= boxRect.top &&
                     rect.bottom <= boxRect.bottom;
-                if (fullyContained && el.dataset.partId) {
-                    selectedIds.push(el.dataset.partId);
+                if (fullyContained && el.dataset.sourcePartId) {
+                    selectedIds.add(el.dataset.sourcePartId);
                 }
             });
-            if (selectedIds.length > 0) {
+            if (selectedIds.size > 0) {
                 const selectedMode = getSelectedToolpathMode();
-                const changedCount = applyToolpathModeToPartIds(selectedIds, selectedMode);
+                const changedCount = applyToolpathModeToPartIds(Array.from(selectedIds), selectedMode);
                 if (changedCount > 0) {
                     log(`已將 ${changedCount} 個路徑設為 ${getModeName(selectedMode)}。`);
                 }
@@ -458,6 +506,10 @@ function loadMfgData() {
             if (mfg.toolD !== undefined) document.getElementById('toolD').value = mfg.toolD;
             if (mfg.postProcessor !== undefined) document.getElementById('postProcessor').value = mfg.postProcessor;
             if (mfg.originMode !== undefined) document.getElementById('originMode').value = mfg.originMode;
+            if (mfg.arrayCountX !== undefined) document.getElementById('arrayCountX').value = mfg.arrayCountX;
+            if (mfg.arraySpacingX !== undefined) document.getElementById('arraySpacingX').value = mfg.arraySpacingX;
+            if (mfg.arrayCountY !== undefined) document.getElementById('arrayCountY').value = mfg.arrayCountY;
+            if (mfg.arraySpacingY !== undefined) document.getElementById('arraySpacingY').value = mfg.arraySpacingY;
             // Restore tab settings
             if (mfg.tabEnabled !== undefined) {
                 const cb = document.getElementById('tabEnable');
@@ -484,6 +536,10 @@ function getMfgData() {
         const v = parseFloat(document.getElementById(id).value);
         return Number.isFinite(v) ? v : fallback;
     };
+    const readCount = (id, fallback) => {
+        const value = readNum(id, fallback);
+        return Math.max(1, Math.round(value));
+    };
 
     const tabEnabled = document.getElementById('tabEnable')?.checked || false;
     const tabThicknessRaw = readNum('tabThickness', 1);
@@ -502,6 +558,10 @@ function getMfgData() {
         toolD: readNum('toolD', 3.175),
         postProcessor: document.getElementById('postProcessor').value || 'grbl',
         originMode: document.getElementById('originMode').value || 'top-bottomleft',
+        arrayCountX: readCount('arrayCountX', 1),
+        arraySpacingX: readNum('arraySpacingX', 0),
+        arrayCountY: readCount('arrayCountY', 1),
+        arraySpacingY: readNum('arraySpacingY', 0),
 
         tabThickness: tabEnabled ? tabThicknessRaw : 0,
         tabWidth: tabEnabled ? tabWidthRaw : 0,
@@ -556,6 +616,93 @@ function applyGcodeOffset(gcodeText, offsetX, offsetY, offsetZ) {
     }).filter(l => l !== '').join('\r\n');
 }
 
+function offsetPartGeometry(part, offsetX, offsetY) {
+    const shiftPoint = (point) => ({
+        ...point,
+        x: point.x + offsetX,
+        y: point.y + offsetY
+    });
+
+    if (Array.isArray(part.points)) {
+        part.points = part.points.map(shiftPoint);
+    }
+    if (part.startPoint) {
+        part.startPoint = shiftPoint(part.startPoint);
+    }
+    if (Array.isArray(part.moves)) {
+        part.moves = part.moves.map((move) => ({
+            ...move,
+            to: move.to ? shiftPoint(move.to) : move.to,
+            center: move.center ? shiftPoint(move.center) : move.center
+        }));
+    }
+    if (part.rect) {
+        part.rect = {
+            ...part.rect,
+            x: part.rect.x + offsetX,
+            y: part.rect.y + offsetY
+        };
+    }
+    if (Array.isArray(part.holes)) {
+        part.holes = part.holes.map((hole) => ({
+            ...hole,
+            x: hole.x + offsetX,
+            y: hole.y + offsetY
+        }));
+    }
+    if (Array.isArray(part.slots)) {
+        part.slots = part.slots.map((slot) => ({
+            ...slot,
+            x: slot.x + offsetX,
+            y: slot.y + offsetY
+        }));
+    }
+    if (Array.isArray(part.outline)) {
+        part.outline = part.outline.map((item) => ({
+            ...item,
+            x: item.x + offsetX,
+            y: item.y + offsetY
+        }));
+    }
+    if (Array.isArray(part.innerOutline)) {
+        part.innerOutline = part.innerOutline.map((item) => ({
+            ...item,
+            x: item.x + offsetX,
+            y: item.y + offsetY
+        }));
+    }
+}
+
+function buildArrayParts(parts, mfg) {
+    const xCount = Math.max(1, Math.round(mfg.arrayCountX || 1));
+    const yCount = Math.max(1, Math.round(mfg.arrayCountY || 1));
+    const xSpacing = Number.isFinite(mfg.arraySpacingX) ? mfg.arraySpacingX : 0;
+    const ySpacing = Number.isFinite(mfg.arraySpacingY) ? mfg.arraySpacingY : 0;
+
+    if (xCount === 1 && yCount === 1) {
+        return parts;
+    }
+
+    const arrayParts = [];
+    for (let row = 0; row < yCount; row++) {
+        for (let col = 0; col < xCount; col++) {
+            const offsetX = col * xSpacing;
+            const offsetY = row * ySpacing;
+            const suffix = `_ax${col + 1}_ay${row + 1}`;
+
+            for (const sourcePart of parts) {
+                const clonedPart = JSON.parse(JSON.stringify(sourcePart));
+                clonedPart.id = `${sourcePart.id}${suffix}`;
+                clonedPart.arrayIndexX = col + 1;
+                clonedPart.arrayIndexY = row + 1;
+                offsetPartGeometry(clonedPart, offsetX, offsetY);
+                arrayParts.push(clonedPart);
+            }
+        }
+    }
+    return arrayParts;
+}
+
 // Generate G-Code
 generateBtn.addEventListener('click', () => {
     if (!currentParts || currentParts.length === 0) return;
@@ -596,6 +743,8 @@ generateBtn.addEventListener('click', () => {
                 }
             }
         }
+
+        partsToProcess = buildArrayParts(partsToProcess, mfg);
 
         const files = buildAllGcodes(partsToProcess, mfg);
         const info = generateMachiningInfo(mfg, partsToProcess.length);
@@ -833,6 +982,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Listen to changes on all settings inputs and save automatically
     const settingInputs = document.querySelectorAll('.settings-section input, .settings-section select');
+    const previewArrayInputIds = ['arrayCountX', 'arraySpacingX', 'arrayCountY', 'arraySpacingY'];
 
     function flashSaved(el) {
         el.style.transition = 'box-shadow 0.15s ease, border-color 0.15s ease';
@@ -848,15 +998,28 @@ document.addEventListener('DOMContentLoaded', () => {
         // Save on change (blur / select change)
         input.addEventListener('change', () => {
             getMfgData();
+            if (currentParts && previewArrayInputIds.includes(input.id)) {
+                renderPreviewSvg();
+            }
             flashSaved(input);
         });
 
         // Save on Enter key for number/text inputs
         if (input.tagName === 'INPUT') {
+            if (previewArrayInputIds.includes(input.id)) {
+                input.addEventListener('input', () => {
+                    if (currentParts) {
+                        renderPreviewSvg();
+                    }
+                });
+            }
             input.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') {
                     e.preventDefault();
                     getMfgData();
+                    if (currentParts && previewArrayInputIds.includes(input.id)) {
+                        renderPreviewSvg();
+                    }
                     flashSaved(input);
                     input.blur(); // remove focus
                 }
