@@ -152,18 +152,12 @@ function isDxfFile(file) {
 }
 
 function getPreviewArraySettings() {
-    const readField = (id, fallback) => {
-        const input = document.getElementById(id);
-        if (!input) return fallback;
-        const value = parseFloat(input.value);
-        return Number.isFinite(value) ? value : fallback;
-    };
-
+    const layout = getLayoutData();
     return {
-        xCount: Math.max(1, Math.round(readField('arrayCountX', 1))),
-        xSpacing: readField('arraySpacingX', 0),
-        yCount: Math.max(1, Math.round(readField('arrayCountY', 1))),
-        ySpacing: readField('arraySpacingY', 0)
+        xCount: layout.arrayCountX,
+        xSpacing: layout.arraySpacingX,
+        yCount: layout.arrayCountY,
+        ySpacing: layout.arraySpacingY
     };
 }
 
@@ -531,14 +525,39 @@ function loadMfgData() {
     }
 }
 
-function getMfgData() {
+function getLayoutData() {
     const readNum = (id, fallback) => {
-        const v = parseFloat(document.getElementById(id).value);
-        return Number.isFinite(v) ? v : fallback;
+        const input = document.getElementById(id);
+        if (!input) return fallback;
+        const value = parseFloat(input.value);
+        return Number.isFinite(value) ? value : fallback;
     };
     const readCount = (id, fallback) => {
         const value = readNum(id, fallback);
         return Math.max(1, Math.round(value));
+    };
+
+    return {
+        rotateAngle: readNum('rotateAngle', 0),
+        arrayCountX: readCount('arrayCountX', 1),
+        arraySpacingX: readNum('arraySpacingX', 0),
+        arrayCountY: readCount('arrayCountY', 1),
+        arraySpacingY: readNum('arraySpacingY', 0)
+    };
+}
+
+function persistSettings() {
+    const mfg = getMfgData();
+    const layout = getLayoutData();
+    const tabEnabled = document.getElementById('tabEnable')?.checked || false;
+    saveMfgData({ ...mfg, ...layout, tabEnabled });
+    return { mfg, layout, tabEnabled };
+}
+
+function getMfgData() {
+    const readNum = (id, fallback) => {
+        const v = parseFloat(document.getElementById(id).value);
+        return Number.isFinite(v) ? v : fallback;
     };
 
     const tabEnabled = document.getElementById('tabEnable')?.checked || false;
@@ -558,16 +577,11 @@ function getMfgData() {
         toolD: readNum('toolD', 3.175),
         postProcessor: document.getElementById('postProcessor').value || 'grbl',
         originMode: document.getElementById('originMode').value || 'top-bottomleft',
-        arrayCountX: readCount('arrayCountX', 1),
-        arraySpacingX: readNum('arraySpacingX', 0),
-        arrayCountY: readCount('arrayCountY', 1),
-        arraySpacingY: readNum('arraySpacingY', 0),
 
         tabThickness: tabEnabled ? tabThicknessRaw : 0,
         tabWidth: tabEnabled ? tabWidthRaw : 0,
         tabCount: tabEnabled ? tabCountRaw : 0
     };
-    saveMfgData({ ...mfg, tabEnabled }); // also persist the checkbox state
     return mfg;
 }
 
@@ -673,6 +687,64 @@ function offsetPartGeometry(part, offsetX, offsetY) {
     }
 }
 
+function rotatePartGeometry(part, angleDeg, originX, originY) {
+    if (!angleDeg) return;
+
+    const rad = -angleDeg * Math.PI / 180;
+    const cosA = Math.cos(rad);
+    const sinA = Math.sin(rad);
+    const rotatePoint = (point) => {
+        const localX = point.x - originX;
+        const localY = point.y - originY;
+        return {
+            ...point,
+            x: localX * cosA - localY * sinA + originX,
+            y: localX * sinA + localY * cosA + originY
+        };
+    };
+
+    if (Array.isArray(part.points)) {
+        part.points = part.points.map(rotatePoint);
+    }
+    if (part.startPoint) {
+        part.startPoint = rotatePoint(part.startPoint);
+    }
+    if (Array.isArray(part.moves)) {
+        part.moves = part.moves.map((move) => ({
+            ...move,
+            to: move.to ? rotatePoint(move.to) : move.to,
+            center: move.center ? rotatePoint(move.center) : move.center
+        }));
+    }
+    if (part.rect) {
+        const rotatedRectOrigin = rotatePoint({ x: part.rect.x, y: part.rect.y });
+        part.rect = {
+            ...part.rect,
+            x: rotatedRectOrigin.x,
+            y: rotatedRectOrigin.y
+        };
+    }
+    if (Array.isArray(part.holes)) {
+        part.holes = part.holes.map(rotatePoint);
+    }
+    if (Array.isArray(part.slots)) {
+        part.slots = part.slots.map((slot) => {
+            const rotatedSlotOrigin = rotatePoint({ x: slot.x, y: slot.y });
+            return {
+                ...slot,
+                x: rotatedSlotOrigin.x,
+                y: rotatedSlotOrigin.y
+            };
+        });
+    }
+    if (Array.isArray(part.outline)) {
+        part.outline = part.outline.map(rotatePoint);
+    }
+    if (Array.isArray(part.innerOutline)) {
+        part.innerOutline = part.innerOutline.map(rotatePoint);
+    }
+}
+
 function buildArrayParts(parts, mfg) {
     const xCount = Math.max(1, Math.round(mfg.arrayCountX || 1));
     const yCount = Math.max(1, Math.round(mfg.arrayCountY || 1));
@@ -707,47 +779,30 @@ function buildArrayParts(parts, mfg) {
 generateBtn.addEventListener('click', () => {
     if (!currentParts || currentParts.length === 0) return;
 
-    const mfg = getMfgData();
+    const { mfg, layout } = persistSettings();
 
     try {
         log("正在計算並生成 G-code...");
 
-        // Deep copy parts to apply rotation without mutating the core data
+        // Deep copy parts to apply layout transforms without mutating the core data
         let partsToProcess = JSON.parse(JSON.stringify(currentParts));
-        const angle = parseFloat(rotateAngle.value) || 0;
+        const angle = layout.rotateAngle || 0;
+
+        partsToProcess = buildArrayParts(partsToProcess, layout);
 
         if (angle !== 0) {
-            // Negative angle because CSS rotate(Xdeg) is CW, but standard cartesian math is CCW
-            const rad = -angle * Math.PI / 180;
-            const cosA = Math.cos(rad);
-            const sinA = Math.sin(rad);
-            const rotatePt = (pt) => ({
-                x: pt.x * cosA - pt.y * sinA,
-                y: pt.x * sinA + pt.y * cosA
-            });
-
-            for (const p of partsToProcess) {
-                if (p.points) {
-                    p.points = p.points.map(rotatePt);
-                }
-                if (p.startPoint) {
-                    p.startPoint = rotatePt(p.startPoint);
-                }
-                if (p.moves) {
-                    p.moves = p.moves.map(m => {
-                        const nm = { ...m };
-                        if (m.to) nm.to = rotatePt(m.to);
-                        if (m.center) nm.center = rotatePt(m.center);
-                        return nm;
-                    });
+            const extentsBeforeRotate = computePartsExtents(partsToProcess);
+            if (extentsBeforeRotate.minX !== Infinity) {
+                const originX = (extentsBeforeRotate.minX + extentsBeforeRotate.maxX) / 2;
+                const originY = (extentsBeforeRotate.minY + extentsBeforeRotate.maxY) / 2;
+                for (const part of partsToProcess) {
+                    rotatePartGeometry(part, angle, originX, originY);
                 }
             }
         }
 
-        partsToProcess = buildArrayParts(partsToProcess, mfg);
-
         const files = buildAllGcodes(partsToProcess, mfg);
-        const info = generateMachiningInfo(mfg, partsToProcess.length);
+        const info = generateMachiningInfo(mfg, partsToProcess.length, layout);
 
         if (files.length > 0) {
             const mergedLines = [];
@@ -976,7 +1031,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (tabEnableCb && tabSettingsPanel) {
         tabEnableCb.addEventListener('change', () => {
             tabSettingsPanel.style.display = tabEnableCb.checked ? 'block' : 'none';
-            getMfgData();
+            persistSettings();
         });
     }
 
@@ -997,7 +1052,7 @@ document.addEventListener('DOMContentLoaded', () => {
     settingInputs.forEach(input => {
         // Save on change (blur / select change)
         input.addEventListener('change', () => {
-            getMfgData();
+            persistSettings();
             if (currentParts && previewArrayInputIds.includes(input.id)) {
                 renderPreviewSvg();
             }
@@ -1016,7 +1071,7 @@ document.addEventListener('DOMContentLoaded', () => {
             input.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') {
                     e.preventDefault();
-                    getMfgData();
+                    persistSettings();
                     if (currentParts && previewArrayInputIds.includes(input.id)) {
                         renderPreviewSvg();
                     }

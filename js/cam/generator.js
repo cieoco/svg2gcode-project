@@ -206,20 +206,21 @@ export function buildAllGcodes(parts, mfg) {
  * 生成加工摘要資訊
  * @param {Object} mfg - 加工參數
  * @param {number} partCount - 零件數量
+ * @param {Object} layout - 版面與變換設定
  * @returns {string} 摘要文字
  */
-export function generateMachiningInfo(mfg, partCount) {
+export function generateMachiningInfo(mfg, partCount, layout = {}) {
     const cutDepth = mfg.thickness + mfg.overcut;
     const layers = Math.max(1, Math.ceil(cutDepth / mfg.stepdown));
-    const arrayCountX = Math.max(1, Math.round(mfg.arrayCountX || 1));
-    const arrayCountY = Math.max(1, Math.round(mfg.arrayCountY || 1));
+    const arrayCountX = Math.max(1, Math.round(layout.arrayCountX || 1));
+    const arrayCountY = Math.max(1, Math.round(layout.arrayCountY || 1));
     const totalCopies = arrayCountX * arrayCountY;
 
     const info = [];
     info.push(`加工參數摘要：`);
     info.push(`- 零件數量：${partCount}`);
     if (totalCopies > 1) {
-        info.push(`- 陣列排列：X ${arrayCountX} 個，間距 ${mfg.arraySpacingX.toFixed(2)} mm；Y ${arrayCountY} 個，間距 ${mfg.arraySpacingY.toFixed(2)} mm`);
+        info.push(`- 陣列排列：X ${arrayCountX} 個，間距 ${(layout.arraySpacingX || 0).toFixed(2)} mm；Y ${arrayCountY} 個，間距 ${(layout.arraySpacingY || 0).toFixed(2)} mm`);
         info.push(`- 陣列總副本數：${totalCopies}`);
     }
     info.push(`- 材料厚度：${mfg.thickness.toFixed(2)} mm`);

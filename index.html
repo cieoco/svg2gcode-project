@@ -141,6 +141,39 @@
             </div>
 
             <!-- Right Side: Settings -->
+            <div class="settings-column">
+            <div class="settings-section pane collapsible-panel">
+                <div class="section-header panel-header">
+                    <h2>版面與變換</h2>
+                    <button type="button" class="panel-toggle-btn" data-panel-toggle="layoutSettingsBody" aria-expanded="false" aria-label="展開版面與變換">+</button>
+                </div>
+
+                <div class="panel-content" id="layoutSettingsBody" hidden>
+                <div class="settings-kv">
+                    <div class="kv-row">
+                        <label class="kv-label" for="rotateAngle">工件旋轉角度 (度)</label>
+                        <input class="kv-field" type="number" id="rotateAngle" value="0" step="15" title="可輸入正負角度，順時針為正">
+                    </div>
+                    <div class="kv-row">
+                        <label class="kv-label" for="arrayCountX">X 軸陣列數量</label>
+                        <input class="kv-field" type="number" id="arrayCountX" value="1" step="1" min="1">
+                    </div>
+                    <div class="kv-row">
+                        <label class="kv-label" for="arraySpacingX">X 軸陣列間距 (mm)</label>
+                        <input class="kv-field" type="number" id="arraySpacingX" value="0" step="1">
+                    </div>
+                    <div class="kv-row">
+                        <label class="kv-label" for="arrayCountY">Y 軸陣列數量</label>
+                        <input class="kv-field" type="number" id="arrayCountY" value="1" step="1" min="1">
+                    </div>
+                    <div class="kv-row">
+                        <label class="kv-label" for="arraySpacingY">Y 軸陣列間距 (mm)</label>
+                        <input class="kv-field" type="number" id="arraySpacingY" value="0" step="1">
+                    </div>
+                </div>
+                </div>
+            </div>
+
             <div class="settings-section pane collapsible-panel">
                 <div class="section-header panel-header">
                     <h2>CAM 加工參數</h2>
@@ -193,10 +226,6 @@
                         </select>
                     </div>
                     <div class="kv-row">
-                        <label class="kv-label" for="rotateAngle">工件旋轉角度 (度)</label>
-                        <input class="kv-field" type="number" id="rotateAngle" value="0" step="15" title="可輸入正負角度，順時針為正">
-                    </div>
-                    <div class="kv-row">
                         <label class="kv-label" for="originMode">工件原點 (Work Origin)</label>
                         <select class="kv-field" id="originMode">
                             <option value="top-center">頂面中心</option>
@@ -204,22 +233,6 @@
                             <option value="bottom-center">底面中心</option>
                             <option value="bottom-bottomleft" selected>底面左下角</option>
                         </select>
-                    </div>
-                    <div class="kv-row">
-                        <label class="kv-label" for="arrayCountX">X 軸陣列數量</label>
-                        <input class="kv-field" type="number" id="arrayCountX" value="1" step="1" min="1">
-                    </div>
-                    <div class="kv-row">
-                        <label class="kv-label" for="arraySpacingX">X 軸陣列間距 (mm)</label>
-                        <input class="kv-field" type="number" id="arraySpacingX" value="0" step="1">
-                    </div>
-                    <div class="kv-row">
-                        <label class="kv-label" for="arrayCountY">Y 軸陣列數量</label>
-                        <input class="kv-field" type="number" id="arrayCountY" value="1" step="1" min="1">
-                    </div>
-                    <div class="kv-row">
-                        <label class="kv-label" for="arraySpacingY">Y 軸陣列間距 (mm)</label>
-                        <input class="kv-field" type="number" id="arraySpacingY" value="0" step="1">
                     </div>
                 </div>
                 </div>
@@ -285,6 +298,7 @@
                     <div class="log-header">系統訊息日誌</div>
                     <pre id="logText">等待載入 SVG / DXF 檔案...</pre>
                 </div>
+            </div>
             </div>
         </div>
     </div>
