@@ -828,10 +828,20 @@ generateBtn.addEventListener('click', () => {
         const info = generateMachiningInfo(mfg, partsToProcess.length, layout);
 
         if (files.length > 0) {
+            // Compute extents first so stock dimensions can go in the header comment
+            const extents = computePartsExtents(partsToProcess);
+            const margin = mfg.materialMargin || 4;
+            const stockW = extents.minX !== Infinity ? (extents.maxX - extents.minX) + margin * 2 : 0;
+            const stockH = extents.minY !== Infinity ? (extents.maxY - extents.minY) + margin * 2 : 0;
+            const stockT = mfg.thickness || 0;
+
             const mergedLines = [];
             // Use strict ASCII uppercase and avoid local date strings which might contain Chinese characters
             const simpleDate = new Date().toISOString().split('T')[0];
             mergedLines.push(`(SVG TO GCODE EXPORT ${simpleDate})`);
+            if (stockW > 0 && stockH > 0) {
+                mergedLines.push(`(STOCK X${stockW.toFixed(2)} Y${stockH.toFixed(2)} Z${stockT.toFixed(2)} MM)`);
+            }
 
             // Add global header
             mergedLines.push(...gcodeHeader(mfg));
@@ -844,7 +854,6 @@ generateBtn.addEventListener('click', () => {
             let txt = mergedLines.join('\r\n');
 
             // --- Origin Offset ---
-            const extents = computePartsExtents(partsToProcess);
             let offsetX = 0, offsetY = 0, offsetZ = 0;
 
             if (extents.minX !== Infinity) {
