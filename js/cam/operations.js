@@ -519,6 +519,8 @@ export function profilePathOps({
                     for (let mi = 1; mi < moves.length; mi++) {
                         dist = emitOptimizedMove(lines, moves[mi], z, tabZ, tabIntervals, dist, feedXY, feedZ, tabActive);
                     }
+                    // Closing cut: re-cut first segment at full depth (ramp left it partially cut)
+                    emitOptimizedMove(lines, firstMove, z, tabZ, tabIntervals, 0, feedXY, feedZ, tabActive);
                     lines.push(`G0 Z${fmt(safeZ)}`);
                     continue;
                 }
