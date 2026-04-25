@@ -345,6 +345,10 @@ body {
     stroke-dasharray: 2, 2;
 }
 
+#previewSvg svg *.path-partial {
+    stroke-dasharray: 6, 3 !important;
+}
+
 #previewSvg svg *:hover {
     stroke-width: 2.5px !important;
     opacity: 0.8;

@@ -88,6 +88,15 @@
                             <input type="radio" name="toolpathMode" value="on-path">
                             <span>銑線上 (On Path)</span>
                         </label>
+                        <span style="width:1px; height:1.2em; background:var(--border-color); display:inline-block; margin:0 4px;"></span>
+                        <label style="display: flex; align-items: center; gap: 5px; cursor: pointer; color: #8b5cf6;">
+                            <input type="checkbox" id="partialCheck">
+                            <span>非貫穿</span>
+                        </label>
+                        <input type="number" id="partialDepth" value="2" step="0.1" min="0.1"
+                            style="width:60px; display:none;"
+                            title="非貫穿目標深度 (mm)">
+                        <span id="partialDepthUnit" style="display:none; font-size:0.82rem; color:#8b5cf6;">mm</span>
                     </div>
                     <div id="previewSvg">
                         <!-- SVG will be injected here -->

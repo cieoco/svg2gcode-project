@@ -23,19 +23,21 @@ import {
 export function buildPartGcode(part, mfg) {
     const { safeZ, feedXY, feedZ, thickness, overcut, stepdown, spindle, holeMode, tabThickness, tabWidth, tabCount, postProcessor } = mfg;
 
-    const cutDepth = -(thickness + overcut); // 負值
-    const drillZ = cutDepth; // 鑽孔深度與切深相同
+    // Handle toolpath modes
+    const mode = part.toolpathMode || 'on-path';
 
-    const tabEnabled = Number.isFinite(tabThickness) && tabThickness > 0
+    const isPartial = part.isPartial === true;
+    const cutDepth = isPartial ? -Math.abs(part.partialDepth || 2) : -(thickness + overcut);
+    const drillZ = -(thickness + overcut);
+
+    const tabEnabled = !isPartial
+        && Number.isFinite(tabThickness) && tabThickness > 0
         && Number.isFinite(tabWidth) && tabWidth > 0
         && Number.isFinite(tabCount) && tabCount > 0
         && Number.isFinite(thickness) && tabThickness < thickness;
     const tabZ = tabEnabled ? -(thickness - tabThickness) : NaN;
 
-    // Handle toolpath modes
-    const mode = part.toolpathMode || 'on-path';
-
-    // Bridges only apply to outside profile cuts
+    // Bridges only apply to outside profile cuts (not partial)
     const activeTabWidth = mode === 'outside' ? tabWidth : 0;
     const activeTabCount = mode === 'outside' ? tabCount : 0;
     const activeTabZ    = mode === 'outside' ? tabZ    : NaN;

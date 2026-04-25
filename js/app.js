@@ -299,13 +299,22 @@ function getModeName(selectedMode) {
     return '不加工';
 }
 
+function getPartialSettings() {
+    const cb = document.getElementById('partialCheck');
+    const depthInput = document.getElementById('partialDepth');
+    const isPartial = cb ? cb.checked : false;
+    const partialDepth = depthInput ? (parseFloat(depthInput.value) || 2) : 2;
+    return { isPartial, partialDepth };
+}
+
 function syncPreviewPartClasses() {
     const elements = previewSvg.querySelectorAll('[data-source-part-id]');
     elements.forEach((el) => {
         const part = currentParts?.find((item) => item.id === el.dataset.sourcePartId);
         if (!part) return;
-        el.classList.remove('path-on-path', 'path-outside', 'path-inside', 'path-drill', 'path-none');
+        el.classList.remove('path-on-path', 'path-outside', 'path-inside', 'path-drill', 'path-none', 'path-partial');
         el.classList.add(`path-${part.toolpathMode || 'none'}`);
+        if (part.isPartial) el.classList.add('path-partial');
     });
 }
 
@@ -313,10 +322,13 @@ function applyToolpathModeToPartIds(partIds, selectedMode) {
     if (!currentParts || !Array.isArray(partIds) || partIds.length === 0) return 0;
     const targetIds = new Set(partIds);
     let changedCount = 0;
+    const { isPartial, partialDepth } = getPartialSettings();
 
     currentParts.forEach((part) => {
         if (!targetIds.has(part.id)) return;
         part.toolpathMode = selectedMode;
+        part.isPartial = isPartial;
+        part.partialDepth = partialDepth;
         if (!part.listOrdered) {
             part.listOrdered = true;
         }
@@ -926,10 +938,13 @@ function renderToolpathList() {
         if (part.toolpathMode === 'outside') modeLabel = '線外 (Outside)';
         if (part.toolpathMode === 'inside') modeLabel = '線內 (Inside)';
         if (part.toolpathMode === 'drill') modeLabel = '鑽孔 (Drill)';
+        const partialBadge = part.isPartial
+            ? `<span style="margin-left:4px;color:#8b5cf6;font-size:0.78rem;">⬦ 非貫穿 ${part.partialDepth}mm</span>`
+            : '';
 
         el.innerHTML = `
             <span><strong style="color:var(--text-muted)">#${index + 1}</strong> 路徑</span>
-            <span class="mode-badge ${part.toolpathMode || 'none'}">${modeLabel}</span>
+            <span><span class="mode-badge ${part.toolpathMode || 'none'}">${modeLabel}</span>${partialBadge}</span>
         `;
 
         el.addEventListener('dragstart', (e) => {
@@ -1024,6 +1039,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Restore saved settings on initial load
     loadMfgData();
+
+    // Partial checkbox: show/hide depth input
+    const partialCheckEl = document.getElementById('partialCheck');
+    const partialDepthEl = document.getElementById('partialDepth');
+    const partialDepthUnitEl = document.getElementById('partialDepthUnit');
+    if (partialCheckEl && partialDepthEl) {
+        partialCheckEl.addEventListener('change', () => {
+            const show = partialCheckEl.checked;
+            partialDepthEl.style.display = show ? 'inline-block' : 'none';
+            if (partialDepthUnitEl) partialDepthUnitEl.style.display = show ? 'inline' : 'none';
+        });
+    }
 
     // Tab enable/disable toggle
     const tabEnableCb = document.getElementById('tabEnable');
