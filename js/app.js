@@ -878,10 +878,6 @@ generateBtn.addEventListener('click', () => {
                     .map(line => line.replace(/\([^)]*\)/g, '').trim()) // Remove any (...) and trim spaces
                     .filter(line => line !== '') // Remove resulting empty lines
                     .join('\r\n');
-                // Re-add stock dimensions using ; style (safe for Mach3)
-                if (stockW > 0 && stockH > 0) {
-                    txt = `; STOCK X${stockW.toFixed(2)} Y${stockH.toFixed(2)} Z${stockT.toFixed(2)} MM\r\n` + txt;
-                }
             }
 
             // Update 3D Viewer
