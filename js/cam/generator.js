@@ -207,13 +207,25 @@ export function buildPartGcode(part, mfg) {
     if (mode === 'inside' && part.sweep && part.points && part.points.length >= 3) {
         lines.push("(SWEEP POCKET CLEARING)");
         const stepover = Math.abs(part.sweepStepover || mfg.toolD * 0.5);
+        const hasMoves = part.moves && part.moves.length > 0 && part.startPoint;
         let n = 1;
         while (n <= 500) {
             const sweepOffset = offsetDist - n * stepover;
-            const sweptPoints = offsetPath(part.points, sweepOffset);
-            if (!sweptPoints || sweptPoints.length < 3 || polygonArea(sweptPoints) < 0.5) break;
+            let sweptPoints, sweptMoves, sweptStartPoint;
+            if (hasMoves) {
+                const result = offsetClosedPathMoves(part.startPoint, part.moves, sweepOffset);
+                if (!result || !result.points || result.points.length < 3 || polygonArea(result.points) < 0.5) break;
+                sweptPoints = result.points;
+                sweptMoves = result.moves;
+                sweptStartPoint = result.startPoint;
+            } else {
+                sweptPoints = offsetPath(part.points, sweepOffset);
+                if (!sweptPoints || sweptPoints.length < 3 || polygonArea(sweptPoints) < 0.5) break;
+            }
             lines.push(...profilePathOps({
                 points: sweptPoints,
+                moves: sweptMoves,
+                startPoint: sweptStartPoint,
                 safeZ, cutDepth, stepdown, feedXY, feedZ,
                 tabWidth: 0, tabCount: 0, tabZ: NaN
             }));
