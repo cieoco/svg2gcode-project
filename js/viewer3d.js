@@ -326,13 +326,11 @@ export function update3DToolpath(gcodeText, mfg) {
         const d = (mfg.thickness || 3) + 0.1;
         const cx = (minX + maxX) / 2;
         const cy = (minY + maxY) / 2;
-        const stockBottomZ = Number.isFinite(minCutZ) ? minCutZ : -d;
-
         const boxGeo = new THREE.BoxGeometry(w, h, d);
         const edges = new THREE.EdgesGeometry(boxGeo);
         const edgeMat = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.15 });
         const edgeMesh = new THREE.LineSegments(edges, edgeMat);
-        edgeMesh.position.set(cx, cy, stockBottomZ + d / 2);
+        edgeMesh.position.set(cx, cy, -d / 2);
         toolpathGroup.add(edgeMesh);
 
         // Auto-frame camera to fit the bounding box
