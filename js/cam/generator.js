@@ -28,7 +28,7 @@ export function buildPartGcode(part, mfg) {
 
     const isPartial = part.isPartial === true;
     const cutDepth = isPartial ? -Math.abs(part.partialDepth || 2) : -(thickness + overcut);
-    const drillZ = -(thickness + overcut);
+    const drillZ = isPartial ? cutDepth : -(thickness + overcut);
 
     const tabEnabled = !isPartial
         && Number.isFinite(tabThickness) && tabThickness > 0
