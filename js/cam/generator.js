@@ -32,6 +32,14 @@ export function buildPartGcode(part, mfg) {
         && Number.isFinite(thickness) && tabThickness < thickness;
     const tabZ = tabEnabled ? -(thickness - tabThickness) : NaN;
 
+    // Handle toolpath modes
+    const mode = part.toolpathMode || 'on-path';
+
+    // Bridges only apply to outside profile cuts
+    const activeTabWidth = mode === 'outside' ? tabWidth : 0;
+    const activeTabCount = mode === 'outside' ? tabCount : 0;
+    const activeTabZ    = mode === 'outside' ? tabZ    : NaN;
+
     const lines = [];
 
     // 註解說明
@@ -42,9 +50,6 @@ export function buildPartGcode(part, mfg) {
     const safeId = part.id ? part.id.toUpperCase().replace(/_/g, '') : 'UNKNOWN';
     const safeStyle = part.barStyle ? part.barStyle.toUpperCase() : 'RECT';
     lines.push(`(PART ${safeId} ${labelL} STYLE ${safeStyle})`);
-
-    // Handle toolpath modes
-    const mode = part.toolpathMode || 'on-path';
 
     // Support 'none' mode (do not generate geometry G-code for this part)
     if (mode === 'none') {
@@ -125,7 +130,8 @@ export function buildPartGcode(part, mfg) {
         lines.push(
             ...profileTangentHullOps({
                 circles: part.outline,
-                safeZ, cutDepth, stepdown, feedXY, feedZ, tabWidth, tabCount, tabZ
+                safeZ, cutDepth, stepdown, feedXY, feedZ,
+                tabWidth: activeTabWidth, tabCount: activeTabCount, tabZ: activeTabZ
             })
         );
     } else if (part.barStyle === 'disk') {
@@ -149,7 +155,8 @@ export function buildPartGcode(part, mfg) {
         ];
         const offsetted = offsetDist !== 0 ? offsetPath(_rectPoints, offsetDist) : _rectPoints;
         lines.push(
-            ...profilePathOps({ points: offsetted, safeZ, cutDepth, stepdown, feedXY, feedZ, tabWidth, tabCount, tabZ })
+            ...profilePathOps({ points: offsetted, safeZ, cutDepth, stepdown, feedXY, feedZ,
+                tabWidth: activeTabWidth, tabCount: activeTabCount, tabZ: activeTabZ })
         );
     } else if (part.barStyle === 'path' && part.points) {
         const offsetTyped = offsetDist !== 0 && part.moves && part.moves.length > 0 && part.startPoint
@@ -167,7 +174,8 @@ export function buildPartGcode(part, mfg) {
                 points: offsetted,
                 moves: useMoves ? (offsetTyped ? offsetTyped.moves : part.moves) : undefined,
                 startPoint: useMoves ? (offsetTyped ? offsetTyped.startPoint : part.startPoint) : undefined,
-                safeZ, cutDepth, stepdown, feedXY, feedZ, tabWidth, tabCount, tabZ
+                safeZ, cutDepth, stepdown, feedXY, feedZ,
+                tabWidth: activeTabWidth, tabCount: activeTabCount, tabZ: activeTabZ
             })
         );
     } else {
@@ -180,7 +188,8 @@ export function buildPartGcode(part, mfg) {
         ];
         const offsetted = offsetDist !== 0 ? offsetPath(_rectPoints, offsetDist) : _rectPoints;
         lines.push(
-            ...profilePathOps({ points: offsetted, safeZ, cutDepth, stepdown, feedXY, feedZ, tabWidth, tabCount, tabZ })
+            ...profilePathOps({ points: offsetted, safeZ, cutDepth, stepdown, feedXY, feedZ,
+                tabWidth: activeTabWidth, tabCount: activeTabCount, tabZ: activeTabZ })
         );
     }
 
