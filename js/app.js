@@ -958,8 +958,29 @@ function renderToolpathList() {
 
         el.innerHTML = `
             <span><strong style="color:var(--text-muted)">#${index + 1}</strong> 路徑</span>
-            <span><span class="mode-badge ${part.toolpathMode || 'none'}">${modeLabel}</span>${partialBadge}${sweepBadge}</span>
+            <span style="display:flex;align-items:center;gap:4px;">
+                <span class="mode-badge ${part.toolpathMode || 'none'}">${modeLabel}</span>${partialBadge}${sweepBadge}
+                <button class="toolpath-remove-btn" title="移除此刀路" style="margin-left:6px;background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:1rem;line-height:1;padding:0 2px;" data-part-id="${part.id}">×</button>
+            </span>
         `;
+
+        el.querySelector('.toolpath-remove-btn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            const target = currentParts.find(p => p.id === part.id);
+            if (target) {
+                target.toolpathMode = 'none';
+                target.isPartial = false;
+                target.sweep = false;
+                target.listOrdered = false;
+            }
+            currentParts = [
+                ...currentParts.filter(p => p.listOrdered),
+                ...currentParts.filter(p => !p.listOrdered)
+            ];
+            syncPreviewPartClasses();
+            renderToolpathList();
+            log(`已移除路徑刀路設定。`);
+        });
 
         el.addEventListener('dragstart', (e) => {
             draggedPartId = part.id;
