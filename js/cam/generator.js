@@ -14,6 +14,14 @@ import {
     offsetClosedPathMoves
 } from './operations.js';
 
+function polygonArea(pts) {
+    let a = 0;
+    for (let i = 0; i < pts.length - 1; i++) {
+        a += pts[i].x * pts[i + 1].y - pts[i + 1].x * pts[i].y;
+    }
+    return Math.abs(a / 2);
+}
+
 /**
  * 為單個零件生成 G-code
  * @param {Object} part - 零件物件
@@ -193,6 +201,24 @@ export function buildPartGcode(part, mfg) {
             ...profilePathOps({ points: offsetted, safeZ, cutDepth, stepdown, feedXY, feedZ,
                 tabWidth: activeTabWidth, tabCount: activeTabCount, tabZ: activeTabZ })
         );
+    }
+
+    // Sweep (pocket clearing) — inside mode only
+    if (mode === 'inside' && part.sweep && part.points && part.points.length >= 3) {
+        lines.push("(SWEEP POCKET CLEARING)");
+        const stepover = Math.abs(part.sweepStepover || mfg.toolD * 0.5);
+        let n = 1;
+        while (n <= 500) {
+            const sweepOffset = offsetDist - n * stepover;
+            const sweptPoints = offsetPath(part.points, sweepOffset);
+            if (!sweptPoints || sweptPoints.length < 3 || polygonArea(sweptPoints) < 0.5) break;
+            lines.push(...profilePathOps({
+                points: sweptPoints,
+                safeZ, cutDepth, stepdown, feedXY, feedZ,
+                tabWidth: 0, tabCount: 0, tabZ: NaN
+            }));
+            n++;
+        }
     }
 
     return lines.join("\r\n") + "\r\n";

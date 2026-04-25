@@ -307,6 +307,14 @@ function getPartialSettings() {
     return { isPartial, partialDepth };
 }
 
+function getSweepSettings() {
+    const cb = document.getElementById('sweepCheck');
+    const stepoverInput = document.getElementById('sweepStepover');
+    const sweep = cb ? cb.checked : false;
+    const sweepStepover = stepoverInput ? (parseFloat(stepoverInput.value) || 2) : 2;
+    return { sweep, sweepStepover };
+}
+
 function syncPreviewPartClasses() {
     const elements = previewSvg.querySelectorAll('[data-source-part-id]');
     elements.forEach((el) => {
@@ -323,12 +331,15 @@ function applyToolpathModeToPartIds(partIds, selectedMode) {
     const targetIds = new Set(partIds);
     let changedCount = 0;
     const { isPartial, partialDepth } = getPartialSettings();
+    const { sweep, sweepStepover } = getSweepSettings();
 
     currentParts.forEach((part) => {
         if (!targetIds.has(part.id)) return;
         part.toolpathMode = selectedMode;
         part.isPartial = isPartial;
         part.partialDepth = partialDepth;
+        part.sweep = selectedMode === 'inside' ? sweep : false;
+        part.sweepStepover = sweepStepover;
         if (!part.listOrdered) {
             part.listOrdered = true;
         }
@@ -941,10 +952,13 @@ function renderToolpathList() {
         const partialBadge = part.isPartial
             ? `<span style="margin-left:4px;color:#8b5cf6;font-size:0.78rem;">⬦ 非貫穿 ${part.partialDepth}mm</span>`
             : '';
+        const sweepBadge = part.sweep
+            ? `<span style="margin-left:4px;color:#10b981;font-size:0.78rem;">⬦ 清掃 ${part.sweepStepover}mm</span>`
+            : '';
 
         el.innerHTML = `
             <span><strong style="color:var(--text-muted)">#${index + 1}</strong> 路徑</span>
-            <span><span class="mode-badge ${part.toolpathMode || 'none'}">${modeLabel}</span>${partialBadge}</span>
+            <span><span class="mode-badge ${part.toolpathMode || 'none'}">${modeLabel}</span>${partialBadge}${sweepBadge}</span>
         `;
 
         el.addEventListener('dragstart', (e) => {
@@ -1049,6 +1063,37 @@ document.addEventListener('DOMContentLoaded', () => {
             const show = partialCheckEl.checked;
             partialDepthEl.style.display = show ? 'inline-block' : 'none';
             if (partialDepthUnitEl) partialDepthUnitEl.style.display = show ? 'inline' : 'none';
+        });
+    }
+
+    // Sweep controls: show only when 銑線內 is selected
+    const sweepLabelEl = document.getElementById('sweepLabel');
+    const sweepSepEl = document.getElementById('sweepSep');
+    const sweepCheckEl = document.getElementById('sweepCheck');
+    const sweepStepoverEl = document.getElementById('sweepStepover');
+    const sweepStepoverUnitEl = document.getElementById('sweepStepoverUnit');
+
+    function updateSweepVisibility() {
+        const mode = getSelectedToolpathMode();
+        const isInside = mode === 'inside';
+        if (sweepSepEl) sweepSepEl.style.display = isInside ? 'inline-block' : 'none';
+        if (sweepLabelEl) sweepLabelEl.style.display = isInside ? 'flex' : 'none';
+        if (!isInside && sweepCheckEl) {
+            sweepCheckEl.checked = false;
+            if (sweepStepoverEl) sweepStepoverEl.style.display = 'none';
+            if (sweepStepoverUnitEl) sweepStepoverUnitEl.style.display = 'none';
+        }
+    }
+
+    document.querySelectorAll('input[name="toolpathMode"]').forEach(radio => {
+        radio.addEventListener('change', updateSweepVisibility);
+    });
+
+    if (sweepCheckEl && sweepStepoverEl) {
+        sweepCheckEl.addEventListener('change', () => {
+            const show = sweepCheckEl.checked;
+            sweepStepoverEl.style.display = show ? 'inline-block' : 'none';
+            if (sweepStepoverUnitEl) sweepStepoverUnitEl.style.display = show ? 'inline' : 'none';
         });
     }
 
