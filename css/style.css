@@ -595,6 +595,17 @@ body {
     box-shadow: var(--shadow-glow);
 }
 
+.btn-secondary {
+    background: transparent;
+    color: var(--text-main);
+    border: 1px solid var(--border);
+}
+
+.btn-secondary:hover:not(:disabled) {
+    border-color: var(--primary);
+    background: rgba(45, 212, 191, 0.08);
+}
+
 .btn-primary:hover:not(:disabled) {
     background: var(--primary-hover);
     transform: translateY(-1px);

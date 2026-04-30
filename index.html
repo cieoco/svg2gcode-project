@@ -234,7 +234,7 @@
                     </div>
                     <div class="kv-row">
                         <label class="kv-label" for="toolD">刀具直徑 (mm)</label>
-                        <input class="kv-field" type="number" id="toolD" value="4" step="0.01">
+                        <input class="kv-field" type="number" id="toolD" value="3.175" step="0.001">
                     </div>
                     <div class="kv-row">
                         <label class="kv-label" for="postProcessor">後處理器格式</label>
@@ -301,6 +301,14 @@
                 </div>
 
                 <div class="action-bar">
+                    <button class="btn btn-secondary" id="resetDefaultsBtn" type="button">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M3 2v6h6"></path>
+                            <path d="M3 13a9 9 0 1 0 3-7.7L3 8"></path>
+                        </svg>
+                        恢復原始設定值
+                    </button>
                     <button class="btn btn-primary" id="generateBtn" disabled>
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

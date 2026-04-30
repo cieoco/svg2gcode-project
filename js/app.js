@@ -13,6 +13,7 @@ const dropZone = document.getElementById('dropZone');
 const fileInput = document.getElementById('fileInput');
 const previewSvg = document.getElementById('previewSvg');
 const generateBtn = document.getElementById('generateBtn');
+const resetDefaultsBtn = document.getElementById('resetDefaultsBtn');
 const logText = document.getElementById('logText');
 const themeSelect = document.getElementById('themeSelect');
 
@@ -31,6 +32,29 @@ const speedSelect = document.getElementById('speedSelect');
 
 const rotateAngle = document.getElementById('rotateAngle');
 const THEME_STORAGE_KEY = 'svg2gcode_theme';
+const SETTINGS_STORAGE_KEY = 'svg2gcode_settings';
+const DEFAULT_SETTINGS = {
+    rotateAngle: 0,
+    arrayCountX: 1,
+    arraySpacingX: 0,
+    arrayCountY: 1,
+    arraySpacingY: 0,
+    thickness: 7,
+    materialMargin: 4,
+    overcut: 0,
+    stepdown: 1.5,
+    safeZ: 10,
+    feedXY: 1000,
+    feedZ: 300,
+    spindle: 10000,
+    toolD: 3.175,
+    postProcessor: 'grbl',
+    originMode: 'bottom-bottomleft',
+    tabEnabled: false,
+    tabCount: 4,
+    tabWidth: 4,
+    tabThickness: 1
+};
 let refreshPreviewTransform = null;
 
 rotateAngle.addEventListener('input', (e) => {
@@ -114,6 +138,20 @@ function log(msg) {
         logText.innerText = msg;
     }
     console.log(msg);
+}
+
+function syncRotatePreview() {
+    if (typeof refreshPreviewTransform === 'function') {
+        refreshPreviewTransform(true);
+        return;
+    }
+
+    const svgEl = previewSvg.querySelector('svg');
+    if (!svgEl || !rotateAngle) return;
+    const angle = parseFloat(rotateAngle.value) || 0;
+    svgEl.style.transform = `rotate(${angle}deg)`;
+    svgEl.style.transformOrigin = 'center center';
+    svgEl.style.transition = 'transform 0.2s ease-in-out';
 }
 
 function applyTheme(theme) {
@@ -500,52 +538,69 @@ function setupSvgInteractions(parts) {
 // Helper: Save current settings to localStorage
 function saveMfgData(mfg) {
     try {
-        localStorage.setItem('svg2gcode_settings', JSON.stringify(mfg));
+        localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(mfg));
     } catch (e) {
         console.warn('Could not save settings to localStorage', e);
     }
 }
 
+function applySettingsToUi(settings = {}) {
+    const fields = [
+        'safeZ',
+        'thickness',
+        'materialMargin',
+        'overcut',
+        'stepdown',
+        'feedXY',
+        'feedZ',
+        'spindle',
+        'toolD',
+        'postProcessor',
+        'originMode',
+        'rotateAngle',
+        'arrayCountX',
+        'arraySpacingX',
+        'arrayCountY',
+        'arraySpacingY',
+        'tabThickness',
+        'tabWidth',
+        'tabCount'
+    ];
+
+    fields.forEach((id) => {
+        if (settings[id] === undefined) return;
+        const el = document.getElementById(id);
+        if (el) el.value = settings[id];
+    });
+
+    const tabEnable = document.getElementById('tabEnable');
+    const tabSettings = document.getElementById('tabSettings');
+    const tabEnabled = Boolean(settings.tabEnabled);
+    if (tabEnable) tabEnable.checked = tabEnabled;
+    if (tabSettings) tabSettings.style.display = tabEnabled ? 'block' : 'none';
+
+    syncRotatePreview();
+}
+
 // Helper: Load settings from localStorage and populate UI
 function loadMfgData() {
     try {
-        const saved = localStorage.getItem('svg2gcode_settings');
+        const saved = localStorage.getItem(SETTINGS_STORAGE_KEY);
         if (saved) {
-            const mfg = JSON.parse(saved);
-            if (mfg.safeZ !== undefined) document.getElementById('safeZ').value = mfg.safeZ;
-            if (mfg.thickness !== undefined) document.getElementById('thickness').value = mfg.thickness;
-            if (mfg.materialMargin !== undefined) document.getElementById('materialMargin').value = mfg.materialMargin;
-            if (mfg.overcut !== undefined) document.getElementById('overcut').value = mfg.overcut;
-            if (mfg.stepdown !== undefined) document.getElementById('stepdown').value = mfg.stepdown;
-            if (mfg.feedXY !== undefined) document.getElementById('feedXY').value = mfg.feedXY;
-            if (mfg.feedZ !== undefined) document.getElementById('feedZ').value = mfg.feedZ;
-            if (mfg.spindle !== undefined) document.getElementById('spindle').value = mfg.spindle;
-            if (mfg.toolD !== undefined) document.getElementById('toolD').value = mfg.toolD;
-            if (mfg.postProcessor !== undefined) document.getElementById('postProcessor').value = mfg.postProcessor;
-            if (mfg.originMode !== undefined) document.getElementById('originMode').value = mfg.originMode;
-            if (mfg.arrayCountX !== undefined) document.getElementById('arrayCountX').value = mfg.arrayCountX;
-            if (mfg.arraySpacingX !== undefined) document.getElementById('arraySpacingX').value = mfg.arraySpacingX;
-            if (mfg.arrayCountY !== undefined) document.getElementById('arrayCountY').value = mfg.arrayCountY;
-            if (mfg.arraySpacingY !== undefined) document.getElementById('arraySpacingY').value = mfg.arraySpacingY;
-            // Restore tab settings
-            if (mfg.tabEnabled !== undefined) {
-                const cb = document.getElementById('tabEnable');
-                if (cb) {
-                    cb.checked = mfg.tabEnabled;
-                    const panel = document.getElementById('tabSettings');
-                    if (panel) panel.style.display = mfg.tabEnabled ? 'block' : 'none';
-                }
-            }
-            if (mfg.tabThickness !== undefined && mfg.tabThickness > 0)
-                document.getElementById('tabThickness').value = mfg.tabThickness;
-            if (mfg.tabWidth !== undefined && mfg.tabWidth > 0)
-                document.getElementById('tabWidth').value = mfg.tabWidth;
-            if (mfg.tabCount !== undefined && mfg.tabCount > 0)
-                document.getElementById('tabCount').value = mfg.tabCount;
+            applySettingsToUi({ ...DEFAULT_SETTINGS, ...JSON.parse(saved) });
         }
     } catch (e) {
         console.warn('Could not load settings from localStorage', e);
     }
+}
+
+function resetSettingsToDefaults() {
+    applySettingsToUi(DEFAULT_SETTINGS);
+    saveMfgData(DEFAULT_SETTINGS);
+    if (currentParts) {
+        renderPreviewSvg();
+    }
+    log('已恢復加工參數與版面設定的原始值。');
 }
 
 function getLayoutData() {
@@ -1083,6 +1138,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Restore saved settings on initial load
     loadMfgData();
+
+    if (resetDefaultsBtn) {
+        resetDefaultsBtn.addEventListener('click', () => {
+            resetSettingsToDefaults();
+        });
+    }
 
     // Partial checkbox: show/hide depth input
     const partialCheckEl = document.getElementById('partialCheck');
