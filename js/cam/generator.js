@@ -5,13 +5,16 @@
 
 import {
     drillOps,
+    faceStockOps,
     profileRectOps,
     profileRoundedRectOps,
     profileCircleOps,
     profilePathOps,
     profileTangentHullOps,
     offsetPath,
-    offsetClosedPathMoves
+    offsetClosedPathMoves,
+    signedPolygonArea,
+    reverseClosedGeom
 } from './operations.js';
 
 function polygonArea(pts) {
@@ -22,6 +25,71 @@ function polygonArea(pts) {
     return Math.abs(a / 2);
 }
 
+function materialName(materialType) {
+    if (materialType === 'aluminum') return '鋁材';
+    if (materialType === 'plastic') return '塑膠';
+    return '木材';
+}
+
+function isClosedPath(points) {
+    if (!Array.isArray(points) || points.length < 3) return false;
+    const first = points[0];
+    const last = points[points.length - 1];
+    return Math.hypot(first.x - last.x, first.y - last.y) < 0.01;
+}
+
+function closedPathArea(points) {
+    if (!Array.isArray(points) || points.length < 3) return 0;
+    const pts = isClosedPath(points) ? points : [...points, points[0]];
+    return signedPolygonArea(pts);
+}
+
+function orientForMaterial(geom, mode, mfg) {
+    if (mfg.materialType !== 'aluminum') return geom;
+    if (mode !== 'outside' && mode !== 'inside') return geom;
+    if (!isClosedPath(geom.points)) return geom;
+
+    const area = closedPathArea(geom.points);
+    if (Math.abs(area) < 1e-6) return geom;
+
+    // For a clockwise spindle, common climb-milling defaults are:
+    // outside profiles clockwise, inside profiles counter-clockwise.
+    const wantsCcw = mode === 'inside';
+    const isCcw = area > 0;
+    return isCcw === wantsCcw ? geom : reverseClosedGeom(geom);
+}
+
+function computePartBounds(part) {
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+
+    const includePoint = (pt) => {
+        if (!pt || !Number.isFinite(pt.x) || !Number.isFinite(pt.y)) return;
+        minX = Math.min(minX, pt.x);
+        maxX = Math.max(maxX, pt.x);
+        minY = Math.min(minY, pt.y);
+        maxY = Math.max(maxY, pt.y);
+    };
+
+    if (Array.isArray(part.points)) part.points.forEach(includePoint);
+    if (part.rect) {
+        includePoint({ x: part.rect.x, y: part.rect.y });
+        includePoint({ x: part.rect.x + part.rect.w, y: part.rect.y + part.rect.h });
+    }
+    if (Array.isArray(part.holes)) part.holes.forEach(includePoint);
+    if (Array.isArray(part.slots)) {
+        part.slots.forEach((slot) => {
+            includePoint({ x: slot.x, y: slot.y });
+            includePoint({ x: slot.x + slot.w, y: slot.y + slot.h });
+        });
+    }
+
+    if (minX === Infinity) return null;
+    return { minX, maxX, minY, maxY };
+}
+
 /**
  * 為單個零件生成 G-code
  * @param {Object} part - 零件物件
@@ -29,13 +97,28 @@ function polygonArea(pts) {
  * @returns {string} G-code 文字
  */
 export function buildPartGcode(part, mfg) {
-    const { safeZ, feedXY, feedZ, thickness, overcut, stepdown, spindle, holeMode, tabThickness, tabWidth, tabCount, postProcessor } = mfg;
+    const {
+        safeZ,
+        feedXY,
+        feedZ,
+        thickness,
+        overcut,
+        stepdown,
+        holeMode,
+        tabThickness,
+        tabWidth,
+        tabCount,
+        peckStep = 0,
+        rampEnable = false,
+        rampAngleDeg = 3
+    } = mfg;
 
     // Handle toolpath modes
     const mode = part.toolpathMode || 'on-path';
+    const topZ = Number.isFinite(mfg.stockTopZ) ? mfg.stockTopZ : 0;
 
     const isPartial = part.isPartial === true;
-    const cutDepth = isPartial ? -Math.abs(part.partialDepth || 2) : -(thickness + overcut);
+    const cutDepth = isPartial ? topZ - Math.abs(part.partialDepth || 2) : -(thickness + overcut);
     const drillZ = isPartial ? cutDepth : -(thickness + overcut);
 
     const tabEnabled = !isPartial
@@ -70,6 +153,33 @@ export function buildPartGcode(part, mfg) {
 
     const offsetDist = mode === 'outside' ? (mfg.toolD / 2) : mode === 'inside' ? (-mfg.toolD / 2) : 0;
 
+    if (mode === 'surface-clean') {
+        const bounds = computePartBounds(part);
+        const faceDepth = Math.max(0, mfg.surfaceCleanDepth || 0);
+        if (!bounds || !(faceDepth > 0)) {
+            lines.push("(SURFACE CLEAN SKIPPED)");
+            return lines.join("\r\n") + "\r\n";
+        }
+
+        lines.push(
+            ...faceStockOps({
+                x0: bounds.minX,
+                y0: bounds.minY,
+                x1: bounds.maxX,
+                y1: bounds.maxY,
+                toolD: mfg.toolD,
+                stepoverPct: mfg.surfaceCleanStepoverPct,
+                faceDepth,
+                stepdown,
+                safeZ,
+                feedXY,
+                feedZ,
+                topZ
+            })
+        );
+        return lines.join("\r\n") + "\r\n";
+    }
+
     // 1. Drill operation specifically selected by user 
     if (mode === 'drill') {
         lines.push("(DRILL SELECTED POINT)");
@@ -84,7 +194,7 @@ export function buildPartGcode(part, mfg) {
             }
             const cx = (minX + maxX) / 2;
             const cy = (minY + maxY) / 2;
-            lines.push(...drillOps({ holes: [{ x: cx, y: cy }], safeZ, drillZ, feedZ }));
+            lines.push(...drillOps({ holes: [{ x: cx, y: cy }], safeZ, drillZ, feedZ, topZ, peckStep }));
         }
 
         return lines.join("\r\n") + "\r\n";
@@ -101,6 +211,7 @@ export function buildPartGcode(part, mfg) {
                     cy: h.y,
                     diameter: holeD,
                     safeZ,
+                    topZ,
                     cutDepth,
                     stepdown,
                     feedXY,
@@ -109,7 +220,7 @@ export function buildPartGcode(part, mfg) {
             );
         }
     } else if (part.holes && part.holes.length > 0) {
-        lines.push(...drillOps({ holes: part.holes, safeZ, drillZ, feedZ }));
+        lines.push(...drillOps({ holes: part.holes, safeZ, drillZ, feedZ, topZ, peckStep }));
     }
 
     // 1.5 導軌槽 (Slots)
@@ -119,7 +230,7 @@ export function buildPartGcode(part, mfg) {
             lines.push(
                 ...profileRoundedRectOps({
                     rect: slot,
-                    safeZ, cutDepth, stepdown, feedXY, feedZ, tabWidth: 0, tabCount: 0, tabZ: NaN
+                    safeZ, topZ, cutDepth, stepdown, feedXY, feedZ, tabWidth: 0, tabCount: 0, tabZ: NaN
                 })
             );
         }
@@ -130,7 +241,7 @@ export function buildPartGcode(part, mfg) {
         lines.push(
             ...profileTangentHullOps({
                 circles: part.innerOutline,
-                safeZ, cutDepth, stepdown, feedXY, feedZ, tabWidth: 0, tabCount: 0, tabZ: NaN
+                safeZ, topZ, cutDepth, stepdown, feedXY, feedZ, tabWidth: 0, tabCount: 0, tabZ: NaN
             })
         );
     }
@@ -140,7 +251,7 @@ export function buildPartGcode(part, mfg) {
         lines.push(
             ...profileTangentHullOps({
                 circles: part.outline,
-                safeZ, cutDepth, stepdown, feedXY, feedZ,
+                safeZ, topZ, cutDepth, stepdown, feedXY, feedZ,
                 tabWidth: activeTabWidth, tabCount: activeTabCount, tabZ: activeTabZ
             })
         );
@@ -152,7 +263,8 @@ export function buildPartGcode(part, mfg) {
             ...profileCircleOps({
                 cx, cy,
                 diameter: part.diameter,
-                safeZ, cutDepth, stepdown, feedXY, feedZ
+                safeZ, topZ, cutDepth, stepdown, feedXY, feedZ,
+                clockwise: mfg.materialType === 'aluminum' && mode === 'outside'
             })
         );
     } else if (part.barStyle === 'rounded') {
@@ -164,9 +276,14 @@ export function buildPartGcode(part, mfg) {
             { x: part.rect.x, y: part.rect.y }
         ];
         const offsetted = offsetDist !== 0 ? offsetPath(_rectPoints, offsetDist) : _rectPoints;
+        const geom = orientForMaterial({ points: offsetted }, mode, mfg);
         lines.push(
-            ...profilePathOps({ points: offsetted, safeZ, cutDepth, stepdown, feedXY, feedZ,
-                tabWidth: activeTabWidth, tabCount: activeTabCount, tabZ: activeTabZ })
+            ...profilePathOps({
+                points: geom.points,
+                safeZ, topZ, cutDepth, stepdown, feedXY, feedZ,
+                tabWidth: activeTabWidth, tabCount: activeTabCount, tabZ: activeTabZ,
+                ramp: rampEnable, rampAngleDeg
+            })
         );
     } else if (part.barStyle === 'path' && part.points) {
         const offsetTyped = offsetDist !== 0 && part.moves && part.moves.length > 0 && part.startPoint
@@ -179,13 +296,19 @@ export function buildPartGcode(part, mfg) {
             offsetTyped ||
             (offsetDist === 0 && part.moves && part.moves.length > 0)
         );
+        const geom = orientForMaterial({
+            points: offsetted,
+            moves: useMoves ? (offsetTyped ? offsetTyped.moves : part.moves) : undefined,
+            startPoint: useMoves ? (offsetTyped ? offsetTyped.startPoint : part.startPoint) : undefined
+        }, mode, mfg);
         lines.push(
             ...profilePathOps({
-                points: offsetted,
-                moves: useMoves ? (offsetTyped ? offsetTyped.moves : part.moves) : undefined,
-                startPoint: useMoves ? (offsetTyped ? offsetTyped.startPoint : part.startPoint) : undefined,
-                safeZ, cutDepth, stepdown, feedXY, feedZ,
-                tabWidth: activeTabWidth, tabCount: activeTabCount, tabZ: activeTabZ
+                points: geom.points,
+                moves: geom.moves,
+                startPoint: geom.startPoint,
+                safeZ, topZ, cutDepth, stepdown, feedXY, feedZ,
+                tabWidth: activeTabWidth, tabCount: activeTabCount, tabZ: activeTabZ,
+                ramp: rampEnable, rampAngleDeg
             })
         );
     } else {
@@ -197,9 +320,14 @@ export function buildPartGcode(part, mfg) {
             { x: part.rect.x, y: part.rect.y }
         ];
         const offsetted = offsetDist !== 0 ? offsetPath(_rectPoints, offsetDist) : _rectPoints;
+        const geom = orientForMaterial({ points: offsetted }, mode, mfg);
         lines.push(
-            ...profilePathOps({ points: offsetted, safeZ, cutDepth, stepdown, feedXY, feedZ,
-                tabWidth: activeTabWidth, tabCount: activeTabCount, tabZ: activeTabZ })
+            ...profilePathOps({
+                points: geom.points,
+                safeZ, topZ, cutDepth, stepdown, feedXY, feedZ,
+                tabWidth: activeTabWidth, tabCount: activeTabCount, tabZ: activeTabZ,
+                ramp: rampEnable, rampAngleDeg
+            })
         );
     }
 
@@ -222,12 +350,18 @@ export function buildPartGcode(part, mfg) {
                 sweptPoints = offsetPath(part.points, sweepOffset);
                 if (!sweptPoints || sweptPoints.length < 3 || polygonArea(sweptPoints) < 0.5) break;
             }
-            lines.push(...profilePathOps({
+            const geom = orientForMaterial({
                 points: sweptPoints,
                 moves: sweptMoves,
-                startPoint: sweptStartPoint,
-                safeZ, cutDepth, stepdown, feedXY, feedZ,
-                tabWidth: 0, tabCount: 0, tabZ: NaN
+                startPoint: sweptStartPoint
+            }, mode, mfg);
+            lines.push(...profilePathOps({
+                points: geom.points,
+                moves: geom.moves,
+                startPoint: geom.startPoint,
+                safeZ, topZ, cutDepth, stepdown, feedXY, feedZ,
+                tabWidth: 0, tabCount: 0, tabZ: NaN,
+                ramp: rampEnable, rampAngleDeg
             }));
             n++;
         }
@@ -244,9 +378,15 @@ export function buildPartGcode(part, mfg) {
  */
 export function buildAllGcodes(parts, mfg) {
     const files = [];
+    let stockTopZ = Number.isFinite(mfg.stockTopZ) ? mfg.stockTopZ : 0;
     for (const p of parts) {
-        const g = buildPartGcode(p, mfg);
+        const opMfg = { ...mfg, stockTopZ };
+        const g = buildPartGcode(p, opMfg);
         files.push({ name: `${p.id}.nc`, text: g });
+        if (p.toolpathMode === 'surface-clean') {
+            const faceDepth = Math.max(0, mfg.surfaceCleanDepth || 0);
+            if (faceDepth > 0) stockTopZ -= faceDepth;
+        }
     }
     return files;
 }
@@ -260,13 +400,17 @@ export function buildAllGcodes(parts, mfg) {
  */
 export function generateMachiningInfo(mfg, partCount, layout = {}) {
     const cutDepth = mfg.thickness + mfg.overcut;
-    const layers = Math.max(1, Math.ceil(cutDepth / mfg.stepdown));
+    const stockTopZ = Number.isFinite(mfg.stockTopZ) ? mfg.stockTopZ : 0;
+    const cuttingDistance = Math.max(0, cutDepth + stockTopZ);
+    const effectiveStepdown = Number.isFinite(mfg.stepdown) && mfg.stepdown > 1e-6 ? mfg.stepdown : Math.max(cuttingDistance, cutDepth);
+    const layers = Math.max(1, Math.ceil(cuttingDistance / Math.max(effectiveStepdown, 1e-6)));
     const arrayCountX = Math.max(1, Math.round(layout.arrayCountX || 1));
     const arrayCountY = Math.max(1, Math.round(layout.arrayCountY || 1));
     const totalCopies = arrayCountX * arrayCountY;
 
     const info = [];
     info.push(`加工參數摘要：`);
+    info.push(`- 加工材料：${materialName(mfg.materialType)}`);
     info.push(`- 零件數量：${partCount}`);
     if (totalCopies > 1) {
         info.push(`- 陣列排列：X ${arrayCountX} 個，間距 ${(layout.arraySpacingX || 0).toFixed(2)} mm；Y ${arrayCountY} 個，間距 ${(layout.arraySpacingY || 0).toFixed(2)} mm`);
@@ -274,11 +418,23 @@ export function generateMachiningInfo(mfg, partCount, layout = {}) {
     }
     info.push(`- 材料厚度：${mfg.thickness.toFixed(2)} mm`);
     info.push(`- 總切深：${cutDepth.toFixed(2)} mm`);
+    const surfaceCleanCount = Math.max(0, Math.round(layout.surfaceCleanCount || 0));
+    if (surfaceCleanCount > 0 && Number.isFinite(mfg.surfaceCleanDepth) && mfg.surfaceCleanDepth > 0) {
+        const finalTopZ = stockTopZ - surfaceCleanCount * mfg.surfaceCleanDepth;
+        info.push(`- 胚料表面清掃：${surfaceCleanCount} 道，單道深度 ${mfg.surfaceCleanDepth.toFixed(2)} mm，步距 ${mfg.surfaceCleanStepoverPct.toFixed(0)}% 刀徑，清掃後頂面約 Z${finalTopZ.toFixed(2)}`);
+    }
     info.push(`- 每層下刀：${mfg.stepdown.toFixed(2)} mm`);
     info.push(`- 切割層數：${layers}`);
     info.push(`- 刀徑：${mfg.toolD.toFixed(2)} mm`);
     info.push(`- XY 進給：${mfg.feedXY.toFixed(0)} mm/min`);
     info.push(`- Z 進給：${mfg.feedZ.toFixed(0)} mm/min`);
+    if (mfg.rampEnable) {
+        info.push(`- 斜坡進刀：啟用，角度 ${mfg.rampAngleDeg.toFixed(1)} deg`);
+    }
+    if (Number.isFinite(mfg.peckStep) && mfg.peckStep > 0) {
+        info.push(`- 啄鑽：每次 ${mfg.peckStep.toFixed(2)} mm`);
+    }
+    info.push(`- 冷卻/氣吹：${mfg.coolantEnable ? '啟用 M8/M9' : '停用'}`);
     info.push(`- 孔加工：${mfg.holeMode === "mill" ? "銑內徑" : "鑽中心點"}`);
     info.push(`- 後處理器：${mfg.postProcessor === "mach3" ? "MACH3" : "GRBL"}`);
     if (Number.isFinite(mfg.spindle) && mfg.spindle > 0) {

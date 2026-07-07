@@ -194,6 +194,20 @@ body {
     color: var(--text-main);
 }
 
+.kv-check {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 38px;
+    color: var(--text-main);
+    font-size: 0.9rem;
+}
+
+.kv-check input {
+    width: 16px;
+    height: 16px;
+}
+
 .panel-toggle-btn {
     width: 32px;
     height: 32px;
@@ -343,6 +357,10 @@ body {
     stroke: #f59e0b !important;
     /* Orange */
     stroke-dasharray: 2, 2;
+}
+
+#previewSvg svg *.path-surface-clean {
+    stroke: #10b981 !important;
 }
 
 #previewSvg svg *.path-partial {
@@ -745,6 +763,11 @@ body.theme-light #logText {
 .toolpath-item .mode-badge.drill {
     background: rgba(245, 158, 11, 0.2);
     color: #f59e0b;
+}
+
+.toolpath-item .mode-badge.surface-clean {
+    background: rgba(16, 185, 129, 0.2);
+    color: #10b981;
 }
 
 .toolpath-list-container {

@@ -83,6 +83,10 @@
                             <input type="radio" name="toolpathMode" value="drill">
                             <span>鑽孔 (Drill)</span>
                         </label>
+                        <label style="display: flex; align-items: center; gap: 5px; cursor: pointer; color: #10b981;">
+                            <input type="radio" name="toolpathMode" value="surface-clean">
+                            <span>清掃 (Face)</span>
+                        </label>
                         <label
                             style="display: flex; align-items: center; gap: 5px; cursor: pointer; color: var(--text-main);">
                             <input type="radio" name="toolpathMode" value="on-path">
@@ -100,7 +104,7 @@
                         <span id="sweepSep" style="width:1px; height:1.2em; background:var(--border-color); display:none; margin:0 4px;"></span>
                         <label id="sweepLabel" style="display: none; align-items: center; gap: 5px; cursor: pointer; color: #10b981;">
                             <input type="checkbox" id="sweepCheck">
-                            <span>清掃</span>
+                            <span>口袋清料</span>
                         </label>
                         <input type="number" id="sweepStepover" value="2" step="0.1" min="0.1"
                             style="width:60px; display:none;"
@@ -201,6 +205,14 @@
                 <div class="panel-content" id="camSettingsBody" hidden>
                 <div class="settings-kv">
                     <div class="kv-row">
+                        <label class="kv-label" for="materialType">加工材料</label>
+                        <select class="kv-field" id="materialType">
+                            <option value="wood">木材</option>
+                            <option value="plastic">塑膠</option>
+                            <option value="aluminum">鋁材</option>
+                        </select>
+                    </div>
+                    <div class="kv-row">
                         <label class="kv-label" for="thickness">材料厚度 (mm)</label>
                         <input class="kv-field" type="number" id="thickness" value="7" step="0.5">
                     </div>
@@ -209,12 +221,20 @@
                         <input class="kv-field" type="number" id="materialMargin" value="4" step="1" title="3D預覽中胚料大於圖形的邊距">
                     </div>
                     <div class="kv-row">
+                        <label class="kv-label" for="surfaceCleanDepth">表面清掃深度 (mm)</label>
+                        <input class="kv-field" type="number" id="surfaceCleanDepth" value="0.2" step="0.05" min="0" title="從目前 Z0 往下掃平的深度">
+                    </div>
+                    <div class="kv-row">
+                        <label class="kv-label" for="surfaceCleanStepoverPct">表面清掃步距 (% 刀徑)</label>
+                        <input class="kv-field" type="number" id="surfaceCleanStepoverPct" value="60" step="5" min="5" max="95" title="每條面銑刀路的橫向間距，100% 等於一個刀徑">
+                    </div>
+                    <div class="kv-row">
                         <label class="kv-label" for="overcut">過切深度 / Overcut (mm)</label>
                         <input class="kv-field" type="number" id="overcut" value="0.0" step="0.1">
                     </div>
                     <div class="kv-row">
                         <label class="kv-label" for="stepdown">每層下刀量 (mm)</label>
-                        <input class="kv-field" type="number" id="stepdown" value="1.5" step="0.1">
+                        <input class="kv-field" type="number" id="stepdown" value="2" step="0.1" min="0.01">
                     </div>
                     <div class="kv-row">
                         <label class="kv-label" for="safeZ">安全高度 Safe Z (mm)</label>
@@ -222,19 +242,41 @@
                     </div>
                     <div class="kv-row">
                         <label class="kv-label" for="feedXY">XY 軸進給率 (mm/min)</label>
-                        <input class="kv-field" type="number" id="feedXY" value="1000" step="100">
+                        <input class="kv-field" type="number" id="feedXY" value="1400" step="100">
                     </div>
                     <div class="kv-row">
                         <label class="kv-label" for="feedZ">Z 軸下刀進給率 (mm/min)</label>
-                        <input class="kv-field" type="number" id="feedZ" value="300" step="50">
+                        <input class="kv-field" type="number" id="feedZ" value="450" step="50">
                     </div>
                     <div class="kv-row">
                         <label class="kv-label" for="spindle">主軸轉速 (RPM)</label>
-                        <input class="kv-field" type="number" id="spindle" value="10000" step="1000">
+                        <input class="kv-field" type="number" id="spindle" value="12000" step="1000">
                     </div>
                     <div class="kv-row">
                         <label class="kv-label" for="toolD">刀具直徑 (mm)</label>
                         <input class="kv-field" type="number" id="toolD" value="3.175" step="0.001">
+                    </div>
+                    <div class="kv-row">
+                        <label class="kv-label" for="rampEnable">斜坡進刀 / Ramp</label>
+                        <label class="kv-check">
+                            <input type="checkbox" id="rampEnable">
+                            啟用
+                        </label>
+                    </div>
+                    <div class="kv-row">
+                        <label class="kv-label" for="rampAngleDeg">斜坡角度 (deg)</label>
+                        <input class="kv-field" type="number" id="rampAngleDeg" value="5" step="0.5" min="0.5" max="45">
+                    </div>
+                    <div class="kv-row">
+                        <label class="kv-label" for="peckStep">啄鑽單次深度 (mm)</label>
+                        <input class="kv-field" type="number" id="peckStep" value="0" step="0.1" min="0" title="0 代表不啄鑽">
+                    </div>
+                    <div class="kv-row">
+                        <label class="kv-label" for="coolantEnable">冷卻 / 氣吹 M8</label>
+                        <label class="kv-check">
+                            <input type="checkbox" id="coolantEnable">
+                            啟用
+                        </label>
                     </div>
                     <div class="kv-row">
                         <label class="kv-label" for="postProcessor">後處理器格式</label>

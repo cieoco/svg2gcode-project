@@ -10,7 +10,7 @@ function normalizePostProcessor(postProcessor) {
     return val === 'mach3' ? 'mach3' : 'grbl';
 }
 
-export function gcodeHeader({ safeZ, spindle, postProcessor }) {
+export function gcodeHeader({ safeZ, spindle, postProcessor, coolantEnable }) {
     const lines = [];
     const post = normalizePostProcessor(postProcessor);
     lines.push(`(SVG2GCODE, ${post === 'mach3' ? 'MACH3' : 'GRBL'})`);
@@ -28,13 +28,19 @@ export function gcodeHeader({ safeZ, spindle, postProcessor }) {
     if (Number.isFinite(spindle) && spindle > 0) {
         lines.push(`M3 S${fmt(spindle)}`);
     }
+    if (coolantEnable) {
+        lines.push("M8  (COOLANT ON)");
+    }
     return lines;
 }
 
-export function gcodeFooter({ safeZ, spindle, postProcessor }) {
+export function gcodeFooter({ safeZ, spindle, postProcessor, coolantEnable }) {
     const lines = [];
     const post = normalizePostProcessor(postProcessor);
     lines.push(`G0 Z${fmt(safeZ)}`);
+    if (coolantEnable) {
+        lines.push("M9  (COOLANT OFF)");
+    }
     if (Number.isFinite(spindle) && spindle > 0) {
         lines.push("M5");
     }
@@ -42,9 +48,35 @@ export function gcodeFooter({ safeZ, spindle, postProcessor }) {
     return lines;
 }
 
-export function drillOps({ holes, safeZ, drillZ, feedZ }) {
+/**
+ * Build Z stepdown levels from topZ down to cutZ.
+ * topZ defaults to 0 (top of stock); with facing enabled the caller
+ * passes the faced surface (-faceDepth) so no air-cutting layers are emitted.
+ */
+export function buildZLevels(topZ, cutZ, stepdown) {
+    const levels = [];
+    const startZ = Number.isFinite(topZ) ? topZ : 0;
+    const endZ = Number.isFinite(cutZ) ? cutZ : 0;
+    const total = Math.abs(endZ - startZ);
+    if (total <= 1e-9) return levels;
+
+    const rawStepdown = Math.abs(stepdown);
+    const sd = Number.isFinite(rawStepdown) && rawStepdown > 1e-6 ? rawStepdown : total;
+    const dir = endZ >= startZ ? 1 : -1;
+    const n = Math.max(1, Math.ceil(total / sd));
+    for (let i = 1; i <= n; i++) {
+        levels.push(startZ + dir * Math.min(i * sd, total));
+    }
+    return levels;
+}
+
+export function drillOps({ holes, safeZ, drillZ, feedZ, topZ = 0, peckStep = 0 }) {
     const lines = [];
     lines.push("(DRILL HOLES)");
+    // Peck drilling: retract between steps to clear chips (critical for aluminum)
+    const totalDepth = Math.abs(drillZ - topZ);
+    const usePeck = Number.isFinite(peckStep) && peckStep > 0 && totalDepth > peckStep + 1e-6;
+    const retractZ = topZ + 0.5;
     let first = true;
     for (const h of holes) {
         // Enforce safe Z explicitly only before the very first hole to ensure clearance
@@ -53,10 +85,129 @@ export function drillOps({ holes, safeZ, drillZ, feedZ }) {
             first = false;
         }
         lines.push(`G0 X${fmt(h.x)} Y${fmt(h.y)}`);
-        lines.push(`G1 Z${fmt(drillZ)} F${fmt(feedZ)}`); // drill down
+        if (usePeck) {
+            const steps = Math.ceil(totalDepth / peckStep);
+            for (let i = 1; i <= steps; i++) {
+                const z = topZ - Math.min(i * peckStep, totalDepth);
+                lines.push(`G1 Z${fmt(z)} F${fmt(feedZ)}`);
+                if (i < steps) {
+                    lines.push(`G0 Z${fmt(retractZ)}`); // retract to clear chips
+                }
+            }
+        } else {
+            lines.push(`G1 Z${fmt(drillZ)} F${fmt(feedZ)}`); // drill down
+        }
         lines.push(`G0 Z${fmt(safeZ)}`); // lift up to safe Z
     }
     return lines;
+}
+
+/**
+ * Face milling (surface clearing) of the stock top.
+ * Zigzag raster over the stock box, stepping down to -faceDepth.
+ * Entry/exit and plunges happen beyond the stock edge (in air) so the
+ * cutter never plunges into material.
+ */
+export function faceStockOps({
+    x0, y0, x1, y1,
+    toolD,
+    stepoverPct,
+    faceDepth,
+    stepdown,
+    safeZ,
+    feedXY,
+    feedZ,
+    topZ = 0,
+}) {
+    const lines = [];
+    if (!(faceDepth > 0) || !(x1 > x0) || !(y1 > y0) || !(toolD > 0)) return lines;
+
+    lines.push("(FACE STOCK TOP)");
+
+    const r = toolD / 2;
+    const pct = Number.isFinite(stepoverPct) ? stepoverPct : 60;
+    const step = Math.min(Math.max(toolD * (pct / 100), 0.1), toolD * 0.95);
+    const lead = r + 1; // start/end beyond the stock edge
+    const xStart = x0 - lead;
+    const xEnd = x1 + lead;
+
+    // Scanline Y centers: first/last lines sit on the stock edge so the
+    // cutter overhangs by one radius and the edges are fully cleaned.
+    const yLines = [];
+    let yc = y0;
+    while (yc < y1 - 1e-6) {
+        yLines.push(yc);
+        yc += step;
+    }
+    yLines.push(y1);
+
+    const startZ = Number.isFinite(topZ) ? topZ : 0;
+    const zLevels = buildZLevels(startZ, startZ - Math.abs(faceDepth), stepdown);
+
+    for (const z of zLevels) {
+        lines.push(`G0 Z${fmt(safeZ)}`);
+        lines.push(`G0 X${fmt(xStart)} Y${fmt(yLines[0])}`);
+        lines.push(`G1 Z${fmt(z)} F${fmt(feedZ)}`); // plunge in air, off the stock
+
+        let atEnd = false;
+        for (let i = 0; i < yLines.length; i++) {
+            if (i > 0) {
+                lines.push(`G1 Y${fmt(yLines[i])} F${fmt(feedXY)}`);
+            }
+            const targetX = atEnd ? xStart : xEnd;
+            lines.push(`G1 X${fmt(targetX)} F${fmt(feedXY)}`);
+            atEnd = !atEnd;
+        }
+        lines.push(`G0 Z${fmt(safeZ)}`);
+    }
+
+    return lines;
+}
+
+/**
+ * Signed area of a polygon in CNC coords (Y up): positive = CCW.
+ */
+export function signedPolygonArea(pts) {
+    let a = 0;
+    for (let i = 0; i < pts.length - 1; i++) {
+        a += pts[i].x * pts[i + 1].y - pts[i + 1].x * pts[i].y;
+    }
+    return a / 2;
+}
+
+/**
+ * Reverse a closed path geometry ({points, moves?, startPoint?}) so it is
+ * traversed in the opposite direction. Used to enforce climb/conventional
+ * milling direction.
+ */
+export function reverseClosedGeom(geom) {
+    const out = {};
+    if (Array.isArray(geom.points)) {
+        out.points = geom.points.slice().reverse();
+    }
+    if (Array.isArray(geom.moves) && geom.moves.length > 0 && geom.startPoint) {
+        const pts = [geom.startPoint];
+        for (const m of geom.moves) pts.push(m.to);
+        const revMoves = [];
+        for (let i = geom.moves.length - 1; i >= 0; i--) {
+            const m = geom.moves[i];
+            const from = pts[i];
+            if (m.type === 'arc') {
+                revMoves.push({
+                    type: 'arc',
+                    to: { x: from.x, y: from.y },
+                    center: { ...m.center },
+                    radius: m.radius,
+                    clockwise: !m.clockwise
+                });
+            } else {
+                revMoves.push({ type: 'line', to: { x: from.x, y: from.y } });
+            }
+        }
+        out.moves = revMoves;
+        out.startPoint = { ...pts[pts.length - 1] };
+    }
+    return { ...geom, ...out };
 }
 
 function buildTabIntervals(totalLen, tabCount, tabWidth) {
@@ -166,6 +317,7 @@ function addArcWithTabs(lines, center, radius, startAngle, endAngle, ccw, z, tab
 export function profileRectOps({
     rect,
     safeZ,
+    topZ = 0,
     cutDepth,
     stepdown,
     feedXY,
@@ -184,14 +336,7 @@ export function profileRectOps({
     const startX = x0;
     const startY = y0;
 
-    const zLevels = [];
-    const total = Math.abs(cutDepth);
-    const sd = Math.abs(stepdown);
-    const n = Math.max(1, Math.ceil(total / sd));
-    for (let i = 1; i <= n; i++) {
-        const z = -Math.min(i * sd, total);
-        zLevels.push(z);
-    }
+    const zLevels = buildZLevels(topZ, cutDepth, stepdown);
 
     const totalLen = 2 * (rect.w + rect.h);
     const tabIntervals = buildTabIntervals(totalLen, tabCount, tabWidth);
@@ -222,6 +367,7 @@ export function profileRectOps({
 export function profileRoundedRectOps({
     rect,
     safeZ,
+    topZ = 0,
     cutDepth,
     stepdown,
     feedXY,
@@ -237,13 +383,7 @@ export function profileRoundedRectOps({
     const x1 = x0 + w;
     const y1 = y0 + h;
 
-    const zLevels = [];
-    const total = Math.abs(cutDepth);
-    const sd = Math.abs(stepdown);
-    const n = Math.max(1, Math.ceil(total / sd));
-    for (let i = 1; i <= n; i++) {
-        zLevels.push(-Math.min(i * sd, total));
-    }
+    const zLevels = buildZLevels(topZ, cutDepth, stepdown);
 
     const totalLen = 2 * (w - 2 * r) + 2 * Math.PI * r;
     const tabIntervals = buildTabIntervals(totalLen, tabCount, tabWidth);
@@ -272,6 +412,7 @@ export function profileCircleOps({
     cy,
     diameter,
     safeZ,
+    topZ = 0,
     cutDepth,
     stepdown,
     feedXY,
@@ -279,18 +420,13 @@ export function profileCircleOps({
     tabWidth,
     tabCount,
     tabZ,
+    clockwise = false,
 }) {
     const lines = [];
     lines.push("(Profile circle)");
     const r = diameter / 2;
 
-    const zLevels = [];
-    const total = Math.abs(cutDepth);
-    const sd = Math.abs(stepdown);
-    const n = Math.max(1, Math.ceil(total / sd));
-    for (let i = 1; i <= n; i++) {
-        zLevels.push(-Math.min(i * sd, total));
-    }
+    const zLevels = buildZLevels(topZ, cutDepth, stepdown);
 
     const totalLen = 2 * Math.PI * r;
     const tabIntervals = buildTabIntervals(totalLen, tabCount, tabWidth);
@@ -303,7 +439,11 @@ export function profileCircleOps({
         lines.push(`G0 X${fmt(cx + r)} Y${fmt(cy)}`);
         lines.push(`G1 Z${fmt(z)} F${fmt(feedZ)}`);
 
-        dist = addArcWithTabs(lines, { x: cx, y: cy }, r, 0, Math.PI * 2, true, z, tabZ, tabIntervals, dist, feedXY, feedZ, tabActive);
+        if (clockwise) {
+            dist = addArcWithTabs(lines, { x: cx, y: cy }, r, 0, -Math.PI * 2, false, z, tabZ, tabIntervals, dist, feedXY, feedZ, tabActive);
+        } else {
+            dist = addArcWithTabs(lines, { x: cx, y: cy }, r, 0, Math.PI * 2, true, z, tabZ, tabIntervals, dist, feedXY, feedZ, tabActive);
+        }
 
         lines.push(`G0 Z${fmt(safeZ)}`);
     }
@@ -407,26 +547,23 @@ export function profilePathOps({
     moves: svgMoves,
     startPoint,
     safeZ,
+    topZ = 0,
     cutDepth,
     stepdown,
     feedXY,
     feedZ,
     tabWidth,
     tabCount,
-    tabZ
+    tabZ,
+    ramp = false,
+    rampAngleDeg = 3
 }) {
     if ((!points || points.length < 2) && (!svgMoves || svgMoves.length === 0)) return [];
 
     const lines = [];
     lines.push("(Profile arbitrary path)");
 
-    const zLevels = [];
-    const total = Math.abs(cutDepth);
-    const sd = Math.abs(stepdown);
-    const n = Math.max(1, Math.ceil(total / sd));
-    for (let i = 1; i <= n; i++) {
-        zLevels.push(-Math.min(i * sd, total));
-    }
+    const zLevels = buildZLevels(topZ, cutDepth, stepdown);
 
     // --- Build moves array ---
     // Strategy B: if svgMoves exist, convert to {from, to, ...} format
@@ -496,42 +633,60 @@ export function profilePathOps({
         const tabActive = tabIntervals.length && Number.isFinite(tabZ) && z < tabZ - 1e-6;
         let dist = 0;
 
-        // Ramp entry for closed paths (except first layer if only 1 layer)
-        const useRamp = isClosed && zLevels.length > 1 && li > 0;
+        const prevZ = li > 0 ? zLevels[li - 1] : topZ;
+
+        // Multi-segment ramp entry for closed paths. Skipped on tab layers
+        // (tab lifts during a sloping cut would be inconsistent) — those
+        // plunge into the groove already opened by previous layers.
+        const useRamp = ramp && isClosed && !tabActive && (prevZ - z) > 1e-6 && totalLen > 0.5;
 
         lines.push(`G0 Z${fmt(safeZ)}`);
         lines.push(`G0 X${fmt(startX)} Y${fmt(startY)}`);
 
         if (useRamp) {
-            // Ramp entry: plunge gradually over the first move
-            const prevZ = li > 0 ? zLevels[li - 1] : 0;
+            const depth = prevZ - z;
+            const angle = Math.min(Math.max(rampAngleDeg, 0.5), 45);
+            // Ramp length limited to one full lap of the path
+            const rampLen = Math.min(depth / Math.tan(angle * Math.PI / 180), totalLen);
+
             lines.push(`G1 Z${fmt(prevZ)} F${fmt(feedZ)}`);
-            // Ramp down over the first segment
-            const firstMove = moves[0];
-            if (firstMove.type === 'line') {
-                const rampLen = Math.hypot(firstMove.to.x - firstMove.from.x, firstMove.to.y - firstMove.from.y);
-                if (rampLen > 0.1) {
-                    // Ramp by moving XY and Z simultaneously
-                    const rampFeed = Math.min(feedXY, Math.sqrt(feedXY * feedXY + feedZ * feedZ));
-                    lines.push(`G1 X${fmt(firstMove.to.x)} Y${fmt(firstMove.to.y)} Z${fmt(z)} F${fmt(rampFeed)}`);
-                    dist += rampLen;
-                    // Continue from move index 1
-                    for (let mi = 1; mi < moves.length; mi++) {
-                        dist = emitOptimizedMove(lines, moves[mi], z, tabZ, tabIntervals, dist, feedXY, feedZ, tabActive);
-                    }
-                    // Closing cut: only on final layer — intermediate layers are re-cut by the next pass
-                    if (li === zLevels.length - 1) {
-                        emitOptimizedMove(lines, firstMove, z, tabZ, tabIntervals, 0, feedXY, feedZ, tabActive);
-                    }
-                    lines.push(`G0 Z${fmt(safeZ)}`);
-                    continue;
+
+            // Descend gradually across consecutive moves (helical on arcs)
+            let cum = 0;
+            let rampCount = 0;
+            for (const move of moves) {
+                const len = move.type === 'arc'
+                    ? arcMoveLength(move)
+                    : Math.hypot(move.to.x - move.from.x, move.to.y - move.from.y);
+                cum += len;
+                rampCount++;
+                const frac = Math.min(1, cum / rampLen);
+                const zEnd = prevZ - depth * frac;
+                if (move.type === 'arc') {
+                    const iOff = move.center.x - move.from.x;
+                    const jOff = move.center.y - move.from.y;
+                    const cmd = move.clockwise ? 'G2' : 'G3';
+                    lines.push(`${cmd} X${fmt(move.to.x)} Y${fmt(move.to.y)} Z${fmt(zEnd)} I${fmt(iOff)} J${fmt(jOff)} F${fmt(feedXY)}`);
+                } else {
+                    lines.push(`G1 X${fmt(move.to.x)} Y${fmt(move.to.y)} Z${fmt(zEnd)} F${fmt(feedXY)}`);
                 }
+                if (cum >= rampLen - 1e-9) break;
             }
-            // Fallback: normal plunge
-            lines.push(`G1 Z${fmt(z)} F${fmt(feedZ)}`);
-        } else {
-            lines.push(`G1 Z${fmt(z)} F${fmt(feedZ)}`);
+
+            // Finish the lap at full depth
+            for (let mi = rampCount; mi < moves.length; mi++) {
+                dist = emitOptimizedMove(lines, moves[mi], z, tabZ, tabIntervals, dist, feedXY, feedZ, tabActive);
+            }
+            // Re-cut the ramped portion at full depth to flatten the entry slope
+            for (let mi = 0; mi < rampCount; mi++) {
+                dist = emitOptimizedMove(lines, moves[mi], z, tabZ, tabIntervals, dist, feedXY, feedZ, tabActive);
+            }
+
+            lines.push(`G0 Z${fmt(safeZ)}`);
+            continue;
         }
+
+        lines.push(`G1 Z${fmt(z)} F${fmt(feedZ)}`);
 
         for (const move of moves) {
             dist = emitOptimizedMove(lines, move, z, tabZ, tabIntervals, dist, feedXY, feedZ, tabActive);
@@ -663,6 +818,7 @@ function arcMoveLength(move) {
 export function profileTangentHullOps({
     circles,
     safeZ,
+    topZ = 0,
     cutDepth,
     stepdown,
     feedXY,
@@ -720,13 +876,7 @@ export function profileTangentHullOps({
 
     const tabIntervals = buildTabIntervals(totalLen, tabCount, tabWidth);
 
-    const zLevels = [];
-    const total = Math.abs(cutDepth);
-    const sd = Math.abs(stepdown);
-    const steps = Math.max(1, Math.ceil(total / sd));
-    for (let i = 1; i <= steps; i++) {
-        zLevels.push(-Math.min(i * sd, total));
-    }
+    const zLevels = buildZLevels(topZ, cutDepth, stepdown);
 
     const lines = [];
     lines.push("(Profile tangent hull)");

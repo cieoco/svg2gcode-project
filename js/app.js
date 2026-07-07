@@ -33,7 +33,114 @@ const speedSelect = document.getElementById('speedSelect');
 const rotateAngle = document.getElementById('rotateAngle');
 const THEME_STORAGE_KEY = 'svg2gcode_theme';
 const SETTINGS_STORAGE_KEY = 'svg2gcode_settings';
+const DEFAULT_MATERIAL = 'wood';
+const DEFAULT_TOOL_D = 3.175;
+const MATERIAL_PRESETS = {
+    wood: {
+        label: '木材',
+        values: {
+            stepdown: 2.0,
+            feedXY: 1400,
+            feedZ: 450,
+            spindle: 12000,
+            rampEnable: false,
+            rampAngleDeg: 5,
+            peckStep: 0,
+            coolantEnable: false,
+            surfaceCleanDepth: 0.3,
+            surfaceCleanStepoverPct: 70
+        },
+        limits: {
+            stepdown: [0.3, 6.0],
+            feedXY: [400, 3500],
+            feedZ: [100, 1000],
+            surfaceCleanDepth: [0.05, 1.0]
+        }
+    },
+    plastic: {
+        label: '塑膠',
+        values: {
+            stepdown: 1.0,
+            feedXY: 900,
+            feedZ: 250,
+            spindle: 8000,
+            rampEnable: true,
+            rampAngleDeg: 3,
+            peckStep: 1.0,
+            coolantEnable: false,
+            surfaceCleanDepth: 0.2,
+            surfaceCleanStepoverPct: 45
+        },
+        limits: {
+            stepdown: [0.15, 3.0],
+            feedXY: [250, 1800],
+            feedZ: [80, 600],
+            peckStep: [0.1, 2.0],
+            surfaceCleanDepth: [0.03, 0.6]
+        }
+    },
+    aluminum: {
+        label: '鋁材',
+        values: {
+            stepdown: 0.5,
+            feedXY: 450,
+            feedZ: 120,
+            spindle: 10000,
+            rampEnable: true,
+            rampAngleDeg: 2,
+            peckStep: 0.6,
+            coolantEnable: true,
+            surfaceCleanDepth: 0.1,
+            surfaceCleanStepoverPct: 35
+        },
+        limits: {
+            stepdown: [0.05, 2.0],
+            feedXY: [120, 1200],
+            feedZ: [40, 350],
+            peckStep: [0.1, 1.5],
+            surfaceCleanDepth: [0.02, 0.35]
+        }
+    }
+};
+const TOOL_DIAMETER_SCALED_FIELDS = ['stepdown', 'feedXY', 'feedZ', 'peckStep', 'surfaceCleanDepth'];
+
+function clamp(value, min, max) {
+    return Math.min(Math.max(value, min), max);
+}
+
+function roundTo(value, decimals) {
+    const factor = 10 ** decimals;
+    return Math.round(value * factor) / factor;
+}
+
+function getMaterialPreset(materialType) {
+    return MATERIAL_PRESETS[materialType] || MATERIAL_PRESETS[DEFAULT_MATERIAL];
+}
+
+function getMaterialPresetValues(materialType, toolD = DEFAULT_TOOL_D) {
+    const preset = getMaterialPreset(materialType);
+    const d = Number.isFinite(toolD) && toolD > 0 ? toolD : DEFAULT_TOOL_D;
+    const ratio = d / DEFAULT_TOOL_D;
+    const values = { ...preset.values };
+
+    TOOL_DIAMETER_SCALED_FIELDS.forEach((field) => {
+        if (!Number.isFinite(values[field])) return;
+        let nextValue = values[field] * ratio;
+        const limit = preset.limits?.[field];
+        if (limit) {
+            nextValue = clamp(nextValue, limit[0], limit[1]);
+        }
+        values[field] = field === 'feedXY' || field === 'feedZ'
+            ? Math.round(nextValue)
+            : roundTo(nextValue, 3);
+    });
+
+    return values;
+}
+
+const DEFAULT_MATERIAL_VALUES = getMaterialPresetValues(DEFAULT_MATERIAL, DEFAULT_TOOL_D);
 const DEFAULT_SETTINGS = {
+    materialType: DEFAULT_MATERIAL,
     rotateAngle: 0,
     arrayCountX: 1,
     arraySpacingX: 0,
@@ -42,14 +149,20 @@ const DEFAULT_SETTINGS = {
     thickness: 7,
     materialMargin: 4,
     overcut: 0,
-    stepdown: 1.5,
+    stepdown: DEFAULT_MATERIAL_VALUES.stepdown,
     safeZ: 10,
-    feedXY: 1000,
-    feedZ: 300,
-    spindle: 10000,
-    toolD: 3.175,
+    feedXY: DEFAULT_MATERIAL_VALUES.feedXY,
+    feedZ: DEFAULT_MATERIAL_VALUES.feedZ,
+    spindle: DEFAULT_MATERIAL_VALUES.spindle,
+    toolD: DEFAULT_TOOL_D,
     postProcessor: 'grbl',
     originMode: 'bottom-bottomleft',
+    rampEnable: DEFAULT_MATERIAL_VALUES.rampEnable,
+    rampAngleDeg: DEFAULT_MATERIAL_VALUES.rampAngleDeg,
+    peckStep: DEFAULT_MATERIAL_VALUES.peckStep,
+    coolantEnable: DEFAULT_MATERIAL_VALUES.coolantEnable,
+    surfaceCleanDepth: DEFAULT_MATERIAL_VALUES.surfaceCleanDepth,
+    surfaceCleanStepoverPct: DEFAULT_MATERIAL_VALUES.surfaceCleanStepoverPct,
     tabEnabled: false,
     tabCount: 4,
     tabWidth: 4,
@@ -163,6 +276,46 @@ function applyTheme(theme) {
     } catch (e) {
         console.warn('Could not save theme to localStorage', e);
     }
+}
+
+function setFieldValue(id, value) {
+    const el = document.getElementById(id);
+    if (!el || value === undefined) return;
+    if (el.type === 'checkbox') {
+        el.checked = Boolean(value);
+    } else {
+        el.value = value;
+    }
+}
+
+function getCurrentToolDiameter() {
+    const toolInput = document.getElementById('toolD');
+    const value = toolInput ? parseFloat(toolInput.value) : DEFAULT_TOOL_D;
+    return Number.isFinite(value) && value > 0 ? value : DEFAULT_TOOL_D;
+}
+
+function applyMaterialPreset(materialType, options = {}) {
+    const preset = getMaterialPreset(materialType);
+    setFieldValue('materialType', MATERIAL_PRESETS[materialType] ? materialType : DEFAULT_MATERIAL);
+
+    const toolD = Number.isFinite(options.toolD) && options.toolD > 0
+        ? options.toolD
+        : getCurrentToolDiameter();
+    const values = getMaterialPresetValues(materialType, toolD);
+
+    Object.entries(values).forEach(([id, value]) => {
+        setFieldValue(id, value);
+    });
+
+    if (options.announce) {
+        log(`已依刀徑 ${toolD.toFixed(3)} mm 套用 ${preset.label} 加工預設。`);
+    }
+}
+
+function materialCommentName(materialType) {
+    if (materialType === 'aluminum') return 'ALUMINUM';
+    if (materialType === 'plastic') return 'PLASTIC';
+    return 'WOOD';
 }
 
 function initTheme() {
@@ -333,6 +486,7 @@ function getModeName(selectedMode) {
     if (selectedMode === 'outside') return '銑線外';
     if (selectedMode === 'inside') return '銑線內';
     if (selectedMode === 'drill') return '鑽孔';
+    if (selectedMode === 'surface-clean') return '清掃';
     if (selectedMode === 'on-path') return '銑線上';
     return '不加工';
 }
@@ -358,7 +512,7 @@ function syncPreviewPartClasses() {
     elements.forEach((el) => {
         const part = currentParts?.find((item) => item.id === el.dataset.sourcePartId);
         if (!part) return;
-        el.classList.remove('path-on-path', 'path-outside', 'path-inside', 'path-drill', 'path-none', 'path-partial');
+        el.classList.remove('path-on-path', 'path-outside', 'path-inside', 'path-drill', 'path-surface-clean', 'path-none', 'path-partial');
         el.classList.add(`path-${part.toolpathMode || 'none'}`);
         if (part.isPartial) el.classList.add('path-partial');
     });
@@ -374,8 +528,8 @@ function applyToolpathModeToPartIds(partIds, selectedMode) {
     currentParts.forEach((part) => {
         if (!targetIds.has(part.id)) return;
         part.toolpathMode = selectedMode;
-        part.isPartial = isPartial;
-        part.partialDepth = partialDepth;
+        part.isPartial = selectedMode !== 'surface-clean' && isPartial;
+        part.partialDepth = part.isPartial ? partialDepth : 0;
         part.sweep = selectedMode === 'inside' ? sweep : false;
         part.sweepStepover = sweepStepover;
         if (!part.listOrdered) {
@@ -546,6 +700,7 @@ function saveMfgData(mfg) {
 
 function applySettingsToUi(settings = {}) {
     const fields = [
+        'materialType',
         'safeZ',
         'thickness',
         'materialMargin',
@@ -558,6 +713,10 @@ function applySettingsToUi(settings = {}) {
         'postProcessor',
         'originMode',
         'rotateAngle',
+        'rampAngleDeg',
+        'peckStep',
+        'surfaceCleanDepth',
+        'surfaceCleanStepoverPct',
         'arrayCountX',
         'arraySpacingX',
         'arrayCountY',
@@ -571,6 +730,16 @@ function applySettingsToUi(settings = {}) {
         if (settings[id] === undefined) return;
         const el = document.getElementById(id);
         if (el) el.value = settings[id];
+    });
+
+    const checkboxFields = [
+        'rampEnable',
+        'coolantEnable'
+    ];
+    checkboxFields.forEach((id) => {
+        if (settings[id] === undefined) return;
+        const el = document.getElementById(id);
+        if (el) el.checked = Boolean(settings[id]);
     });
 
     const tabEnable = document.getElementById('tabEnable');
@@ -634,9 +803,12 @@ function persistSettings() {
 
 function getMfgData() {
     const readNum = (id, fallback) => {
-        const v = parseFloat(document.getElementById(id).value);
+        const el = document.getElementById(id);
+        if (!el) return fallback;
+        const v = parseFloat(el.value);
         return Number.isFinite(v) ? v : fallback;
     };
+    const readBool = (id) => document.getElementById(id)?.checked || false;
 
     const tabEnabled = document.getElementById('tabEnable')?.checked || false;
     const tabThicknessRaw = readNum('tabThickness', 1);
@@ -644,6 +816,7 @@ function getMfgData() {
     const tabCountRaw = readNum('tabCount', 4);
 
     const mfg = {
+        materialType: document.getElementById('materialType')?.value || DEFAULT_MATERIAL,
         safeZ: readNum('safeZ', 10),
         thickness: readNum('thickness', 7),
         materialMargin: readNum('materialMargin', 4),
@@ -653,8 +826,14 @@ function getMfgData() {
         feedZ: readNum('feedZ', 300),
         spindle: readNum('spindle', 10000),
         toolD: readNum('toolD', 3.175),
-        postProcessor: document.getElementById('postProcessor').value || 'grbl',
-        originMode: document.getElementById('originMode').value || 'top-bottomleft',
+        postProcessor: document.getElementById('postProcessor')?.value || 'grbl',
+        originMode: document.getElementById('originMode')?.value || 'top-bottomleft',
+        rampEnable: readBool('rampEnable'),
+        rampAngleDeg: readNum('rampAngleDeg', 3),
+        peckStep: readNum('peckStep', 0),
+        coolantEnable: readBool('coolantEnable'),
+        surfaceCleanDepth: readNum('surfaceCleanDepth', 0.2),
+        surfaceCleanStepoverPct: readNum('surfaceCleanStepoverPct', 60),
 
         tabThickness: tabEnabled ? tabThicknessRaw : 0,
         tabWidth: tabEnabled ? tabWidthRaw : 0,
@@ -879,16 +1058,19 @@ generateBtn.addEventListener('click', () => {
             }
         }
 
-        const files = buildAllGcodes(partsToProcess, mfg);
-        const info = generateMachiningInfo(mfg, partsToProcess.length, layout);
+        const extents = computePartsExtents(partsToProcess);
+        const margin = mfg.materialMargin || 4;
+        const effectiveMfg = { ...mfg };
+
+        const surfaceCleanCount = partsToProcess.filter((part) => part.toolpathMode === 'surface-clean').length;
+        const files = buildAllGcodes(partsToProcess, effectiveMfg);
+        const info = generateMachiningInfo(effectiveMfg, partsToProcess.length, { ...layout, surfaceCleanCount });
 
         if (files.length > 0) {
             // Compute extents first so stock dimensions can go in the header comment
-            const extents = computePartsExtents(partsToProcess);
-            const margin = mfg.materialMargin || 4;
             const stockW = extents.minX !== Infinity ? (extents.maxX - extents.minX) + margin * 2 : 0;
             const stockH = extents.minY !== Infinity ? (extents.maxY - extents.minY) + margin * 2 : 0;
-            const stockT = mfg.thickness || 0;
+            const stockT = effectiveMfg.thickness || 0;
 
             const mergedLines = [];
             // Use strict ASCII uppercase and avoid local date strings which might contain Chinese characters
@@ -897,14 +1079,15 @@ generateBtn.addEventListener('click', () => {
             if (stockW > 0 && stockH > 0) {
                 mergedLines.push(`(STOCK X${stockW.toFixed(2)} Y${stockH.toFixed(2)} Z${stockT.toFixed(2)} MM)`);
             }
+            mergedLines.push(`(MATERIAL ${materialCommentName(mfg.materialType)})`);
 
             // Add global header
-            mergedLines.push(...gcodeHeader(mfg));
+            mergedLines.push(...gcodeHeader(effectiveMfg));
 
             files.forEach(f => mergedLines.push(f.text));
 
             // Add global footer
-            mergedLines.push(...gcodeFooter(mfg));
+            mergedLines.push(...gcodeFooter(effectiveMfg));
 
             let txt = mergedLines.join('\r\n');
 
@@ -914,13 +1097,13 @@ generateBtn.addEventListener('click', () => {
             if (extents.minX !== Infinity) {
                 const cx = (extents.minX + extents.maxX) / 2;
                 const cy = (extents.minY + extents.maxY) / 2;
-                const mode = mfg.originMode;
+                const mode = effectiveMfg.originMode;
 
                 // XY: center subtracts midpoint; bottomleft subtracts min corner
                 offsetX = mode.includes('center') ? -cx : -extents.minX;
                 offsetY = mode.includes('center') ? -cy : -extents.minY;
                 // Z: bottom shifts so Z0 = bottom face of material
-                offsetZ = mode.startsWith('bottom') ? mfg.thickness : 0;
+                offsetZ = mode.startsWith('bottom') ? effectiveMfg.thickness : 0;
             }
 
             txt = applyGcodeOffset(txt, offsetX, offsetY, offsetZ);
@@ -928,7 +1111,7 @@ generateBtn.addEventListener('click', () => {
             // Mach3 has ancient bugs where letters like 'O' (program number) inside comments
             // cause "Bad character used" errors. E.g. (DRILL HOLES) -> O followed by L.
             // Safest fallback is to strip all comments for Mach3.
-            if (mfg.postProcessor === 'mach3') {
+            if (effectiveMfg.postProcessor === 'mach3') {
                 txt = txt.split(/\r?\n/)
                     .map(line => line.replace(/\([^)]*\)/g, '').trim()) // Remove any (...) and trim spaces
                     .filter(line => line !== '') // Remove resulting empty lines
@@ -936,7 +1119,7 @@ generateBtn.addEventListener('click', () => {
             }
 
             // Update 3D Viewer
-            update3DToolpath(txt, mfg);
+            update3DToolpath(txt, effectiveMfg);
 
             // Switch to 3D tab
             if (!tab3D.classList.contains('active')) {
@@ -960,7 +1143,7 @@ generateBtn.addEventListener('click', () => {
                 'bottom-center': '底面中心',
                 'bottom-bottomleft': '底面左下角'
             };
-            const originLabel = originLabels[mfg.originMode] || mfg.originMode;
+            const originLabel = originLabels[effectiveMfg.originMode] || effectiveMfg.originMode;
 
             log(`成功！G-Code 檔案已下載。\n工件原點：${originLabel}\n\n${info}`);
         }
@@ -1013,11 +1196,12 @@ function renderToolpathList() {
         if (part.toolpathMode === 'outside') modeLabel = '線外 (Outside)';
         if (part.toolpathMode === 'inside') modeLabel = '線內 (Inside)';
         if (part.toolpathMode === 'drill') modeLabel = '鑽孔 (Drill)';
+        if (part.toolpathMode === 'surface-clean') modeLabel = '清掃 (Face)';
         const partialBadge = part.isPartial
             ? `<span style="margin-left:4px;color:#8b5cf6;font-size:0.78rem;">⬦ 非貫穿 ${part.partialDepth}mm</span>`
             : '';
         const sweepBadge = part.sweep
-            ? `<span style="margin-left:4px;color:#10b981;font-size:0.78rem;">⬦ 清掃 ${part.sweepStepover}mm</span>`
+            ? `<span style="margin-left:4px;color:#10b981;font-size:0.78rem;">⬦ 口袋清料 ${part.sweepStepover}mm</span>`
             : '';
 
         el.innerHTML = `
@@ -1035,6 +1219,7 @@ function renderToolpathList() {
                 target.toolpathMode = 'none';
                 target.isPartial = false;
                 target.sweep = false;
+                target.partialDepth = 0;
                 target.listOrdered = false;
             }
             currentParts = [
@@ -1195,6 +1380,24 @@ document.addEventListener('DOMContentLoaded', () => {
         tabEnableCb.addEventListener('change', () => {
             tabSettingsPanel.style.display = tabEnableCb.checked ? 'block' : 'none';
             persistSettings();
+        });
+    }
+
+    const materialTypeEl = document.getElementById('materialType');
+    if (materialTypeEl) {
+        materialTypeEl.addEventListener('change', () => {
+            applyMaterialPreset(materialTypeEl.value, { announce: true });
+        });
+    }
+
+    const toolDEl = document.getElementById('toolD');
+    if (toolDEl) {
+        toolDEl.addEventListener('change', () => {
+            const materialType = document.getElementById('materialType')?.value || DEFAULT_MATERIAL;
+            applyMaterialPreset(materialType, {
+                announce: true,
+                toolD: getCurrentToolDiameter()
+            });
         });
     }
 
