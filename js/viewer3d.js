@@ -318,14 +318,24 @@ export function update3DToolpath(gcodeText, mfg) {
         }
     }
 
-    // Render stock material box
+    // Render stock material box: use the explicit rectangular stock when
+    // provided; fall back to toolpath extents + margin for legacy callers
     if (minX !== Infinity && maxX !== -Infinity && minY !== Infinity && maxY !== -Infinity) {
-        const margin = mfg.materialMargin !== undefined ? mfg.materialMargin : 4;
-        const w = (maxX - minX) + margin * 2;
-        const h = (maxY - minY) + margin * 2;
+        const sb = mfg.stockBounds;
+        let w, h, cx, cy;
+        if (sb && sb.maxX > sb.minX && sb.maxY > sb.minY) {
+            w = sb.maxX - sb.minX;
+            h = sb.maxY - sb.minY;
+            cx = (sb.minX + sb.maxX) / 2;
+            cy = (sb.minY + sb.maxY) / 2;
+        } else {
+            const margin = mfg.materialMargin !== undefined ? mfg.materialMargin : 4;
+            w = (maxX - minX) + margin * 2;
+            h = (maxY - minY) + margin * 2;
+            cx = (minX + maxX) / 2;
+            cy = (minY + maxY) / 2;
+        }
         const d = (mfg.thickness || 3) + 0.1;
-        const cx = (minX + maxX) / 2;
-        const cy = (minY + maxY) / 2;
         const isBottomOrigin = (mfg.originMode || '').startsWith('bottom');
         const stockCenterZ = isBottomOrigin ? d / 2 : -d / 2;
 

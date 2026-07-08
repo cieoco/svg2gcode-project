@@ -103,60 +103,128 @@ export function drillOps({ holes, safeZ, drillZ, feedZ, topZ = 0, peckStep = 0 }
 }
 
 /**
+ * Build the XY path (tool-center polyline) for facing the stock top.
+ * Shared by the G-code emitter and the 2D preview overlay so both always
+ * show the same toolpath.
+ *
+ * pattern:
+ *  - 'zigzag': raster back and forth. Entry/exit beyond the stock edge so
+ *    plunges happen in air; first/last scanlines sit on the stock edge so
+ *    the cutter overhangs by one radius and edges are fully cleaned.
+ *  - 'spiral': rectangular rings from the outside in; the outer ring rides
+ *    the stock edge (cutter overhangs by one radius).
+ *
+ * startCorner ('bl'|'br'|'tl'|'tr') = 對刀定位點, the pass starts nearest
+ * to where the operator parked the tool.
+ */
+export function buildFacePattern({
+    x0, y0, x1, y1,
+    toolD,
+    overlapPct,
+    pattern = 'zigzag',
+    startCorner = 'bl'
+}) {
+    if (!(x1 > x0) || !(y1 > y0) || !(toolD > 0)) return [];
+
+    const r = toolD / 2;
+    const ov = Number.isFinite(overlapPct) ? overlapPct : 40;
+    // step = tool diameter minus requested overlap, kept sane
+    const step = Math.min(Math.max(toolD * (1 - ov / 100), 0.1), toolD * 0.95);
+    const fromLeft = startCorner !== 'br' && startCorner !== 'tr';
+    const fromBottom = startCorner !== 'tl' && startCorner !== 'tr';
+    const pts = [];
+
+    if (pattern === 'spiral') {
+        let ix0 = x0, iy0 = y0, ix1 = x1, iy1 = y1;
+        while (ix1 - ix0 > 1e-6 && iy1 - iy0 > 1e-6) {
+            const corners = [
+                { x: fromLeft ? ix0 : ix1, y: fromBottom ? iy0 : iy1 },
+                { x: fromLeft ? ix1 : ix0, y: fromBottom ? iy0 : iy1 },
+                { x: fromLeft ? ix1 : ix0, y: fromBottom ? iy1 : iy0 },
+                { x: fromLeft ? ix0 : ix1, y: fromBottom ? iy1 : iy0 }
+            ];
+            pts.push(...corners, { ...corners[0] });
+            ix0 += step; iy0 += step; ix1 -= step; iy1 -= step;
+        }
+        // Cover the remaining central sliver with one straight pass
+        if (ix1 - ix0 > -step || iy1 - iy0 > -step) {
+            const cx = (Math.min(ix0, ix1) + Math.max(ix0, ix1)) / 2;
+            const cy = (Math.min(iy0, iy1) + Math.max(iy0, iy1)) / 2;
+            if (ix1 - ix0 >= iy1 - iy0) {
+                pts.push({ x: Math.min(ix0, ix1), y: cy }, { x: Math.max(ix0, ix1), y: cy });
+            } else {
+                pts.push({ x: cx, y: Math.min(iy0, iy1) }, { x: cx, y: Math.max(iy0, iy1) });
+            }
+        }
+        return pts;
+    }
+
+    // zigzag raster
+    const lead = r + 1; // start/end beyond the stock edge
+    const yLines = [];
+    if (fromBottom) {
+        let yc = y0;
+        while (yc < y1 - 1e-6) { yLines.push(yc); yc += step; }
+        yLines.push(y1);
+    } else {
+        let yc = y1;
+        while (yc > y0 + 1e-6) { yLines.push(yc); yc -= step; }
+        yLines.push(y0);
+    }
+    const xNear = fromLeft ? x0 - lead : x1 + lead;
+    const xFar = fromLeft ? x1 + lead : x0 - lead;
+
+    let x = xNear;
+    yLines.forEach((yy, i) => {
+        if (i === 0) {
+            pts.push({ x: xNear, y: yy });
+        } else {
+            pts.push({ x, y: yy }); // step over to the next scanline
+        }
+        x = x === xNear ? xFar : xNear;
+        pts.push({ x, y: yy }); // cut across
+    });
+    return pts;
+}
+
+/**
  * Face milling (surface clearing) of the stock top.
- * Zigzag raster over the stock box, stepping down to -faceDepth.
- * Entry/exit and plunges happen beyond the stock edge (in air) so the
- * cutter never plunges into material.
+ * Follows buildFacePattern() at each Z level, stepping down by
+ * faceStepdown per pass until -faceDepth.
  */
 export function faceStockOps({
     x0, y0, x1, y1,
     toolD,
-    stepoverPct,
+    overlapPct,
     faceDepth,
-    stepdown,
+    faceStepdown,
     safeZ,
     feedXY,
     feedZ,
     topZ = 0,
+    pattern = 'zigzag',
+    startCorner = 'bl'
 }) {
     const lines = [];
     if (!(faceDepth > 0) || !(x1 > x0) || !(y1 > y0) || !(toolD > 0)) return lines;
 
+    const path = buildFacePattern({ x0, y0, x1, y1, toolD, overlapPct, pattern, startCorner });
+    if (path.length < 2) return lines;
+
     lines.push("(FACE STOCK TOP)");
 
-    const r = toolD / 2;
-    const pct = Number.isFinite(stepoverPct) ? stepoverPct : 60;
-    const step = Math.min(Math.max(toolD * (pct / 100), 0.1), toolD * 0.95);
-    const lead = r + 1; // start/end beyond the stock edge
-    const xStart = x0 - lead;
-    const xEnd = x1 + lead;
-
-    // Scanline Y centers: first/last lines sit on the stock edge so the
-    // cutter overhangs by one radius and the edges are fully cleaned.
-    const yLines = [];
-    let yc = y0;
-    while (yc < y1 - 1e-6) {
-        yLines.push(yc);
-        yc += step;
-    }
-    yLines.push(y1);
-
+    const perPass = Number.isFinite(faceStepdown) && faceStepdown > 0
+        ? faceStepdown
+        : Math.abs(faceDepth);
     const startZ = Number.isFinite(topZ) ? topZ : 0;
-    const zLevels = buildZLevels(startZ, startZ - Math.abs(faceDepth), stepdown);
+    const zLevels = buildZLevels(startZ, startZ - Math.abs(faceDepth), perPass);
 
     for (const z of zLevels) {
         lines.push(`G0 Z${fmt(safeZ)}`);
-        lines.push(`G0 X${fmt(xStart)} Y${fmt(yLines[0])}`);
-        lines.push(`G1 Z${fmt(z)} F${fmt(feedZ)}`); // plunge in air, off the stock
-
-        let atEnd = false;
-        for (let i = 0; i < yLines.length; i++) {
-            if (i > 0) {
-                lines.push(`G1 Y${fmt(yLines[i])} F${fmt(feedXY)}`);
-            }
-            const targetX = atEnd ? xStart : xEnd;
-            lines.push(`G1 X${fmt(targetX)} F${fmt(feedXY)}`);
-            atEnd = !atEnd;
+        lines.push(`G0 X${fmt(path[0].x)} Y${fmt(path[0].y)}`);
+        lines.push(`G1 Z${fmt(z)} F${fmt(feedZ)}`);
+        for (let i = 1; i < path.length; i++) {
+            lines.push(`G1 X${fmt(path[i].x)} Y${fmt(path[i].y)} F${fmt(feedXY)}`);
         }
         lines.push(`G0 Z${fmt(safeZ)}`);
     }

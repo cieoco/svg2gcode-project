@@ -5,7 +5,7 @@
 import { parseSVG } from './svg-parser.js';
 import { parseDXF } from './dxf-parser.js';
 import { buildAllGcodes, generateMachiningInfo } from './cam/generator.js';
-import { gcodeHeader, gcodeFooter } from './cam/operations.js';
+import { gcodeHeader, gcodeFooter, buildFacePattern } from './cam/operations.js';
 import { init3DViewer, update3DToolpath, linkAnimationUI, reset3DView } from './viewer3d.js';
 
 // Elements
@@ -49,13 +49,15 @@ const MATERIAL_PRESETS = {
             peckStep: 0,
             coolantEnable: false,
             surfaceCleanDepth: 0.3,
-            surfaceCleanStepoverPct: 70
+            faceStepdown: 1.0,
+            faceOverlapPct: 30
         },
         limits: {
             stepdown: [0.3, 6.0],
             feedXY: [400, 3500],
             feedZ: [100, 1000],
-            surfaceCleanDepth: [0.05, 1.0]
+            surfaceCleanDepth: [0.05, 1.0],
+            faceStepdown: [0.2, 3.0]
         }
     },
     plastic: {
@@ -70,14 +72,16 @@ const MATERIAL_PRESETS = {
             peckStep: 1.0,
             coolantEnable: false,
             surfaceCleanDepth: 0.2,
-            surfaceCleanStepoverPct: 45
+            faceStepdown: 0.6,
+            faceOverlapPct: 55
         },
         limits: {
             stepdown: [0.15, 3.0],
             feedXY: [250, 1800],
             feedZ: [80, 600],
             peckStep: [0.1, 2.0],
-            surfaceCleanDepth: [0.03, 0.6]
+            surfaceCleanDepth: [0.03, 0.6],
+            faceStepdown: [0.15, 2.0]
         }
     },
     aluminum: {
@@ -92,18 +96,20 @@ const MATERIAL_PRESETS = {
             peckStep: 0.6,
             coolantEnable: true,
             surfaceCleanDepth: 0.1,
-            surfaceCleanStepoverPct: 35
+            faceStepdown: 0.3,
+            faceOverlapPct: 65
         },
         limits: {
             stepdown: [0.05, 2.0],
             feedXY: [120, 1200],
             feedZ: [40, 350],
             peckStep: [0.1, 1.5],
-            surfaceCleanDepth: [0.02, 0.35]
+            surfaceCleanDepth: [0.02, 0.35],
+            faceStepdown: [0.05, 1.0]
         }
     }
 };
-const TOOL_DIAMETER_SCALED_FIELDS = ['stepdown', 'feedXY', 'feedZ', 'peckStep', 'surfaceCleanDepth'];
+const TOOL_DIAMETER_SCALED_FIELDS = ['stepdown', 'feedXY', 'feedZ', 'peckStep', 'surfaceCleanDepth', 'faceStepdown'];
 
 function clamp(value, min, max) {
     return Math.min(Math.max(value, min), max);
@@ -148,7 +154,8 @@ const DEFAULT_SETTINGS = {
     arrayCountY: 1,
     arraySpacingY: 0,
     thickness: 7,
-    materialMargin: 4,
+    stockW: 0,
+    stockH: 0,
     overcut: 0,
     stepdown: DEFAULT_MATERIAL_VALUES.stepdown,
     safeZ: 10,
@@ -163,7 +170,11 @@ const DEFAULT_SETTINGS = {
     peckStep: DEFAULT_MATERIAL_VALUES.peckStep,
     coolantEnable: DEFAULT_MATERIAL_VALUES.coolantEnable,
     surfaceCleanDepth: DEFAULT_MATERIAL_VALUES.surfaceCleanDepth,
-    surfaceCleanStepoverPct: DEFAULT_MATERIAL_VALUES.surfaceCleanStepoverPct,
+    faceStepdown: DEFAULT_MATERIAL_VALUES.faceStepdown,
+    faceOverlapPct: DEFAULT_MATERIAL_VALUES.faceOverlapPct,
+    facePattern: 'zigzag',
+    faceOrigin: 'bl-top',
+    faceEnable: false,
     tabEnabled: false,
     tabCount: 4,
     tabWidth: 4,
@@ -334,8 +345,9 @@ function applyUiMode(mode, options = {}) {
     document.getElementById('modeSimpleBtn')?.classList.toggle('active', m === 'simple');
     document.getElementById('modeEngineerBtn')?.classList.toggle('active', m === 'engineer');
     if (m === 'simple') {
-        // 傻瓜模式只剩一個參數面板，直接展開避免多按一下
+        // 傻瓜模式面板不多，直接展開避免多按一下（胚料厚度在 stock 面板內）
         setPanelExpanded('camSettingsBody', true);
+        setPanelExpanded('stockPanelBody', true);
     }
     try {
         localStorage.setItem(UI_MODE_STORAGE_KEY, m);
@@ -447,12 +459,106 @@ function buildPartsPreviewSvg(parts, options = {}) {
 
     if (!Number.isFinite(minX) || !Number.isFinite(minDisplayY)) return '';
 
-    const width = Math.max(1e-6, maxX - minX);
-    const height = Math.max(1e-6, maxDisplayY - minDisplayY);
-    const pad = Math.max(2, Math.max(width, height) * 0.05);
-    const viewBox = `${(minX - pad).toFixed(4)} ${(minDisplayY - pad).toFixed(4)} ${(width + pad * 2).toFixed(4)} ${(height + pad * 2).toFixed(4)}`;
+    // 清掃預覽疊加層：胚料矩形 + 清掃刀路 + 對刀定位點標記
+    const faceOverlay = buildFaceOverlaySvg({
+        minX, maxX, minDisplayY, maxDisplayY, flipY
+    });
 
-    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}" preserveAspectRatio="xMidYMid meet">${renderedPaths.join('')}</svg>`;
+    let vbMinX = minX;
+    let vbMaxX = maxX;
+    let vbMinY = minDisplayY;
+    let vbMaxY = maxDisplayY;
+    if (faceOverlay) {
+        vbMinX = Math.min(vbMinX, faceOverlay.bounds.minX);
+        vbMaxX = Math.max(vbMaxX, faceOverlay.bounds.maxX);
+        vbMinY = Math.min(vbMinY, faceOverlay.bounds.minY);
+        vbMaxY = Math.max(vbMaxY, faceOverlay.bounds.maxY);
+    }
+
+    const width = Math.max(1e-6, vbMaxX - vbMinX);
+    const height = Math.max(1e-6, vbMaxY - vbMinY);
+    const pad = Math.max(2, Math.max(width, height) * 0.05);
+    const viewBox = `${(vbMinX - pad).toFixed(4)} ${(vbMinY - pad).toFixed(4)} ${(width + pad * 2).toFixed(4)} ${(height + pad * 2).toFixed(4)}`;
+
+    const overlayMarkup = faceOverlay ? faceOverlay.markup : '';
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}" preserveAspectRatio="xMidYMid meet">${overlayMarkup}${renderedPaths.join('')}</svg>`;
+}
+
+/**
+ * 清掃 2D 預覽：胚料矩形（虛線）、實際清掃刀路（與 G-Code 同一組
+ * buildFacePattern 產生）、對刀定位點十字標記。
+ * 傳入的是顯示座標範圍；DXF 預覽 Y 已翻轉（display = -machineY），
+ * 所以定位點的上下要對映回機器座標的方向。
+ */
+function buildFaceOverlaySvg({ minX, maxX, minDisplayY, maxDisplayY, flipY }) {
+    if (!document.getElementById('faceEnable')?.checked) return null;
+
+    const readNum = (id, fallback) => {
+        const v = parseFloat(document.getElementById(id)?.value);
+        return Number.isFinite(v) && v > 0 ? v : fallback;
+    };
+
+    const designW = maxX - minX;
+    const designH = maxDisplayY - minDisplayY;
+    const stockW = readNum('stockW', designW);
+    const stockH = readNum('stockH', designH);
+    const cx = (minX + maxX) / 2;
+    const cy = (minDisplayY + maxDisplayY) / 2;
+    const sx0 = cx - stockW / 2;
+    const sx1 = cx + stockW / 2;
+    const sy0 = cy - stockH / 2;
+    const sy1 = cy + stockH / 2;
+
+    const toolD = readNum('toolD', DEFAULT_TOOL_D);
+    const overlapRaw = parseFloat(document.getElementById('faceOverlapPct')?.value);
+    const overlapPct = Number.isFinite(overlapRaw) ? overlapRaw : 40;
+    const pattern = document.getElementById('facePattern')?.value || 'zigzag';
+    const faceOrigin = parseFaceOrigin(document.getElementById('faceOrigin')?.value).corner;
+
+    // 機器座標的「下」在顯示座標的哪一側：DXF (flipY) 的 display=-machineY，
+    // 機器下緣落在顯示 maxY；SVG 則同向。
+    const machineBottomAtDisplayMax = flipY;
+    const displayCornerMap = machineBottomAtDisplayMax
+        ? { bl: 'tl', br: 'tr', tl: 'bl', tr: 'br', center: 'center' }
+        : { bl: 'bl', br: 'br', tl: 'tl', tr: 'tr', center: 'center' };
+    const displayCorner = displayCornerMap[faceOrigin] || 'bl';
+
+    const patternPts = buildFacePattern({
+        x0: sx0, y0: sy0, x1: sx1, y1: sy1,
+        toolD,
+        overlapPct,
+        pattern,
+        startCorner: displayCorner === 'center' ? 'bl' : displayCorner
+    });
+    const polyline = patternPts.length >= 2
+        ? `<polyline class="face-path" points="${patternPts.map((p) => `${p.x.toFixed(3)},${p.y.toFixed(3)}`).join(' ')}"></polyline>`
+        : '';
+
+    // 對刀定位點標記（圓 + 十字）
+    const isLeft = displayCorner === 'bl' || displayCorner === 'tl';
+    const atMaxY = displayCorner === 'tl' || displayCorner === 'tr';
+    const mx = displayCorner === 'center' ? cx : (isLeft ? sx0 : sx1);
+    const my = displayCorner === 'center' ? cy : (atMaxY ? sy1 : sy0);
+    const mr = Math.max(toolD * 0.6, Math.max(stockW, stockH) * 0.02);
+    const marker = `<circle class="face-origin-marker" cx="${mx.toFixed(3)}" cy="${my.toFixed(3)}" r="${mr.toFixed(3)}"></circle>`
+        + `<path class="face-origin-cross" d="M ${(mx - mr * 1.8).toFixed(3)} ${my.toFixed(3)} H ${(mx + mr * 1.8).toFixed(3)} M ${mx.toFixed(3)} ${(my - mr * 1.8).toFixed(3)} V ${(my + mr * 1.8).toFixed(3)}"></path>`;
+
+    const markup = `<g class="face-overlay">`
+        + `<rect class="face-stock-rect" x="${sx0.toFixed(3)}" y="${sy0.toFixed(3)}" width="${stockW.toFixed(3)}" height="${stockH.toFixed(3)}"></rect>`
+        + polyline
+        + marker
+        + `</g>`;
+
+    const lead = toolD / 2 + 1;
+    return {
+        markup,
+        bounds: {
+            minX: sx0 - lead,
+            maxX: sx1 + lead,
+            minY: sy0 - mr * 2,
+            maxY: sy1 + mr * 2
+        }
+    };
 }
 
 function renderPreviewSvg() {
@@ -490,7 +596,9 @@ function processFile(file) {
         try {
             const fileContent = e.target.result;
             if (svgFile) {
-                previewFlipY = false;
+                // parseSVG 已把 Y 翻成機器座標（Y 向上），顯示時要再翻回螢幕
+                // 方向，否則 2D 預覽會與 G-Code / 3D 預覽上下顛倒
+                previewFlipY = true;
                 currentParts = await parseSVG(fileContent);
             } else {
                 previewFlipY = true;
@@ -504,6 +612,16 @@ function processFile(file) {
             const sourceLabel = svgFile ? 'SVG' : 'DXF';
             log(`已從 ${sourceLabel} 成功解析出 ${currentParts.length} 個切削零件路徑。`);
             generateBtn.disabled = currentParts.length === 0;
+
+            // 預設胚料 = 圖形外接矩形（無條件進位到整數 mm），可再手動改大
+            const designExtents = computePartsExtents(currentParts);
+            if (designExtents.minX !== Infinity) {
+                const autoW = Math.ceil(designExtents.maxX - designExtents.minX);
+                const autoH = Math.ceil(designExtents.maxY - designExtents.minY);
+                setFieldValue('stockW', autoW);
+                setFieldValue('stockH', autoH);
+                persistSettings();
+            }
 
             renderPreviewSvg();
 
@@ -527,7 +645,6 @@ function getModeName(selectedMode) {
     if (selectedMode === 'outside') return '銑線外';
     if (selectedMode === 'inside') return '銑線內';
     if (selectedMode === 'drill') return '鑽孔';
-    if (selectedMode === 'surface-clean') return '清掃';
     if (selectedMode === 'on-path') return '銑線上';
     return '不加工';
 }
@@ -553,7 +670,7 @@ function syncPreviewPartClasses() {
     elements.forEach((el) => {
         const part = currentParts?.find((item) => item.id === el.dataset.sourcePartId);
         if (!part) return;
-        el.classList.remove('path-on-path', 'path-outside', 'path-inside', 'path-drill', 'path-surface-clean', 'path-none', 'path-partial');
+        el.classList.remove('path-on-path', 'path-outside', 'path-inside', 'path-drill', 'path-none', 'path-partial');
         el.classList.add(`path-${part.toolpathMode || 'none'}`);
         if (part.isPartial) el.classList.add('path-partial');
     });
@@ -569,7 +686,7 @@ function applyToolpathModeToPartIds(partIds, selectedMode) {
     currentParts.forEach((part) => {
         if (!targetIds.has(part.id)) return;
         part.toolpathMode = selectedMode;
-        part.isPartial = selectedMode !== 'surface-clean' && isPartial;
+        part.isPartial = isPartial;
         part.partialDepth = part.isPartial ? partialDepth : 0;
         part.sweep = selectedMode === 'inside' ? sweep : false;
         part.sweepStepover = sweepStepover;
@@ -744,7 +861,8 @@ function applySettingsToUi(settings = {}) {
         'materialType',
         'safeZ',
         'thickness',
-        'materialMargin',
+        'stockW',
+        'stockH',
         'overcut',
         'stepdown',
         'feedXY',
@@ -757,7 +875,10 @@ function applySettingsToUi(settings = {}) {
         'rampAngleDeg',
         'peckStep',
         'surfaceCleanDepth',
-        'surfaceCleanStepoverPct',
+        'faceStepdown',
+        'faceOverlapPct',
+        'facePattern',
+        'faceOrigin',
         'arrayCountX',
         'arraySpacingX',
         'arrayCountY',
@@ -788,6 +909,12 @@ function applySettingsToUi(settings = {}) {
     const tabEnabled = Boolean(settings.tabEnabled);
     if (tabEnable) tabEnable.checked = tabEnabled;
     if (tabSettings) tabSettings.style.display = tabEnabled ? 'block' : 'none';
+
+    const faceEnable = document.getElementById('faceEnable');
+    const faceSettings = document.getElementById('faceSettings');
+    const faceEnabled = Boolean(settings.faceEnable);
+    if (faceEnable) faceEnable.checked = faceEnabled;
+    if (faceSettings) faceSettings.style.display = faceEnabled ? 'block' : 'none';
 
     syncRotatePreview();
 }
@@ -860,7 +987,9 @@ function getMfgData() {
         materialType: document.getElementById('materialType')?.value || DEFAULT_MATERIAL,
         safeZ: readNum('safeZ', 10),
         thickness: readNum('thickness', 7),
-        materialMargin: readNum('materialMargin', 4),
+        stockW: readNum('stockW', 0),
+        stockH: readNum('stockH', 0),
+        faceEnable: readBool('faceEnable'),
         overcut: readNum('overcut', 0.0),
         stepdown: readNum('stepdown', 1.5),
         feedXY: readNum('feedXY', 1000),
@@ -874,7 +1003,10 @@ function getMfgData() {
         peckStep: readNum('peckStep', 0),
         coolantEnable: readBool('coolantEnable'),
         surfaceCleanDepth: readNum('surfaceCleanDepth', 0.2),
-        surfaceCleanStepoverPct: readNum('surfaceCleanStepoverPct', 60),
+        faceStepdown: readNum('faceStepdown', 1),
+        faceOverlapPct: readNum('faceOverlapPct', 40),
+        facePattern: document.getElementById('facePattern')?.value || 'zigzag',
+        faceOrigin: document.getElementById('faceOrigin')?.value || 'bl',
 
         tabThickness: tabEnabled ? tabThicknessRaw : 0,
         tabWidth: tabEnabled ? tabWidthRaw : 0,
@@ -1119,137 +1251,244 @@ function collectSafetyWarnings(parts, mfg) {
     return warnings;
 }
 
-const ACTIVE_TOOLPATH_MODES = ['outside', 'inside', 'drill', 'on-path', 'surface-clean'];
+const ACTIVE_TOOLPATH_MODES = ['outside', 'inside', 'drill', 'on-path'];
+
+const FACE_CORNER_NAMES = { bl: '胚料左下角', br: '胚料右下角', tl: '胚料左上角', tr: '胚料右上角', center: '胚料中心' };
+
+// 定位點值 = "角落-Z基準"，例如 'bl-top'、'br-bottom'、'center-top'
+// （中心只能碰到頂面）。舊設定只有角落名時視為頂面。
+function parseFaceOrigin(value) {
+    const [rawCorner = 'bl', rawZ = 'top'] = String(value || 'bl-top').split('-');
+    const corner = FACE_CORNER_NAMES[rawCorner] ? rawCorner : 'bl';
+    const zref = rawZ === 'bottom' && corner !== 'center' ? 'bottom' : 'top';
+    return { corner, zref };
+}
+
+// 組出完整 G-Code 程式：generate（下載）與 3D 即時預覽共用同一條路徑
+function buildProgram() {
+    if (!currentParts || currentParts.length === 0) return null;
+
+    const { mfg, layout } = persistSettings();
+
+    // Deep copy parts to apply layout transforms without mutating the core data
+    let partsToProcess = JSON.parse(JSON.stringify(currentParts));
+    const angle = layout.rotateAngle || 0;
+
+    partsToProcess = buildArrayParts(partsToProcess, layout);
+
+    if (angle !== 0) {
+        const extentsBeforeRotate = computePartsExtents(partsToProcess);
+        if (extentsBeforeRotate.minX !== Infinity) {
+            const originX = (extentsBeforeRotate.minX + extentsBeforeRotate.maxX) / 2;
+            const originY = (extentsBeforeRotate.minY + extentsBeforeRotate.maxY) / 2;
+            for (const part of partsToProcess) {
+                rotatePartGeometry(part, angle, originX, originY);
+            }
+        }
+    }
+
+    const extents = computePartsExtents(partsToProcess);
+    const effectiveMfg = { ...mfg };
+
+    // 正規化定位點：generator 只需要角落代碼，Z 基準留給原點偏移用
+    const faceOriginParsed = parseFaceOrigin(mfg.faceOrigin);
+    effectiveMfg.faceOriginCorner = faceOriginParsed.corner;
+    effectiveMfg.faceOriginZ = faceOriginParsed.zref;
+
+    // 胚料為矩形：使用者設定長×寬（0 = 自動取圖形範圍），置中於整體圖形
+    let stockW = 0;
+    let stockH = 0;
+    let stockTooSmall = false;
+    if (extents.minX !== Infinity) {
+        const designW = extents.maxX - extents.minX;
+        const designH = extents.maxY - extents.minY;
+        stockW = mfg.stockW > 0 ? mfg.stockW : designW;
+        stockH = mfg.stockH > 0 ? mfg.stockH : designH;
+        stockTooSmall = stockW < designW - 1e-6 || stockH < designH - 1e-6;
+        const cx = (extents.minX + extents.maxX) / 2;
+        const cy = (extents.minY + extents.maxY) / 2;
+        effectiveMfg.stockBounds = {
+            minX: cx - stockW / 2,
+            minY: cy - stockH / 2,
+            maxX: cx + stockW / 2,
+            maxY: cy + stockH / 2
+        };
+    }
+
+    const activeParts = partsToProcess.filter((part) => ACTIVE_TOOLPATH_MODES.includes(part.toolpathMode));
+    const faceActive = Boolean(effectiveMfg.faceEnable)
+        && (effectiveMfg.surfaceCleanDepth || 0) > 0
+        && Boolean(effectiveMfg.stockBounds);
+    if (activeParts.length === 0 && !faceActive) {
+        return { blocked: true };
+    }
+
+    if (faceActive && faceOriginParsed.zref === 'bottom') {
+        // 底面對刀：使用者填的材料厚度 = 成品工件高，粗胚 = 厚度 + 預留量。
+        // 內部幾何一律以粗胚厚度計算，切穿深度與支撐橋高度才會正確
+        effectiveMfg.thickness = (mfg.thickness || 0) + Math.max(0, mfg.surfaceCleanDepth || 0);
+    }
+
+    const safetyWarnings = collectSafetyWarnings(partsToProcess, effectiveMfg);
+    if (stockTooSmall) {
+        const designW = extents.maxX - extents.minX;
+        const designH = extents.maxY - extents.minY;
+        safetyWarnings.push(`設定的胚料 ${stockW.toFixed(1)}×${stockH.toFixed(1)} mm 小於圖形範圍 ${designW.toFixed(1)}×${designH.toFixed(1)} mm（含陣列/旋轉後），部分刀路會切到胚料外。`);
+    }
+
+    const files = buildAllGcodes(partsToProcess, effectiveMfg);
+    const info = generateMachiningInfo(effectiveMfg, partsToProcess.length, layout);
+    if (files.length === 0) return { blocked: true };
+
+    const stockT = effectiveMfg.thickness || 0;
+
+    const mergedLines = [];
+    // Use strict ASCII uppercase and avoid local date strings which might contain Chinese characters
+    const simpleDate = new Date().toISOString().split('T')[0];
+    mergedLines.push(`(SVG TO GCODE EXPORT ${simpleDate})`);
+    if (stockW > 0 && stockH > 0) {
+        mergedLines.push(`(STOCK X${stockW.toFixed(2)} Y${stockH.toFixed(2)} Z${stockT.toFixed(2)} MM)`);
+    }
+    mergedLines.push(`(MATERIAL ${materialCommentName(mfg.materialType)})`);
+
+    // Add global header
+    mergedLines.push(...gcodeHeader(effectiveMfg));
+
+    files.forEach(f => mergedLines.push(f.text));
+
+    // Add global footer
+    mergedLines.push(...gcodeFooter(effectiveMfg));
+
+    let txt = mergedLines.join('\r\n');
+
+    // --- Origin Offset ---
+    let offsetX = 0, offsetY = 0, offsetZ = 0;
+    let originLabel = effectiveMfg.originMode;
+
+    if (faceActive && effectiveMfg.stockBounds) {
+        // 啟用清掃時：程式原點 = 刀具定位點（胚料上的對刀點），
+        // 工件原點下拉此時不生效。
+        //  - 頂面對刀：Z0 = 粗胚頂面，清掃掃掉「總深度」。
+        //  - 底面對刀：Z0 = 胚料底面（床台），清掃從 材料厚度+預留量 掃到
+        //    材料厚度，成品工件高精確等於材料厚度。
+        const sb = effectiveMfg.stockBounds;
+        const { corner, zref } = faceOriginParsed;
+        offsetX = -(corner === 'br' || corner === 'tr' ? sb.maxX : corner === 'center' ? (sb.minX + sb.maxX) / 2 : sb.minX);
+        offsetY = -(corner === 'tl' || corner === 'tr' ? sb.maxY : corner === 'center' ? (sb.minY + sb.maxY) / 2 : sb.minY);
+        // effectiveMfg.thickness 在底面模式已含預留量（= 粗胚厚度）
+        offsetZ = zref === 'bottom' ? (effectiveMfg.thickness || 0) : 0;
+        originLabel = zref === 'bottom'
+            ? `${FACE_CORNER_NAMES[corner]}・底面（床台，清掃後工件高 = 材料厚度 ${(mfg.thickness || 0).toFixed(2)} mm）`
+            : `${FACE_CORNER_NAMES[corner]}・頂面（清掃對刀點）`;
+    } else if (extents.minX !== Infinity) {
+        const cx = (extents.minX + extents.maxX) / 2;
+        const cy = (extents.minY + extents.maxY) / 2;
+        const mode = effectiveMfg.originMode;
+
+        // XY: center subtracts midpoint; bottomleft subtracts min corner
+        offsetX = mode.includes('center') ? -cx : -extents.minX;
+        offsetY = mode.includes('center') ? -cy : -extents.minY;
+        // Z: bottom shifts so Z0 = bottom face of material
+        offsetZ = mode.startsWith('bottom') ? effectiveMfg.thickness : 0;
+
+        const originLabels = {
+            'top-center': '頂面中心',
+            'top-bottomleft': '頂面左下角',
+            'bottom-center': '底面中心',
+            'bottom-bottomleft': '底面左下角'
+        };
+        originLabel = originLabels[mode] || mode;
+    }
+
+    txt = applyGcodeOffset(txt, offsetX, offsetY, offsetZ);
+
+    // Mach3 has ancient bugs where letters like 'O' (program number) inside comments
+    // cause "Bad character used" errors. E.g. (DRILL HOLES) -> O followed by L.
+    // Safest fallback is to strip all comments for Mach3.
+    if (effectiveMfg.postProcessor === 'mach3') {
+        txt = txt.split(/\r?\n/)
+            .map(line => line.replace(/\([^)]*\)/g, '').trim()) // Remove any (...) and trim spaces
+            .filter(line => line !== '') // Remove resulting empty lines
+            .join('\r\n');
+    }
+
+    // 3D viewer gets the offset-applied G-code, so shift the stock box too
+    const viewerMfg = effectiveMfg.stockBounds
+        ? {
+            ...effectiveMfg,
+            stockBounds: {
+                minX: effectiveMfg.stockBounds.minX + offsetX,
+                minY: effectiveMfg.stockBounds.minY + offsetY,
+                maxX: effectiveMfg.stockBounds.maxX + offsetX,
+                maxY: effectiveMfg.stockBounds.maxY + offsetY
+            }
+        }
+        : { ...effectiveMfg };
+    if (faceActive) {
+        // 3D 胚料框依對刀 Z 基準擺放：頂面對刀時框在 Z0 之下（清掃面在框
+        // 頂），底面對刀時框在 Z0 之上。厚度已是粗胚厚度（底面模式含預留量）
+        viewerMfg.originMode = faceOriginParsed.zref === 'bottom' ? 'bottom-face' : 'top-face';
+    }
+
+    return { txt, viewerMfg, info, safetyWarnings, originLabel };
+}
 
 generateBtn.addEventListener('click', () => {
     if (!currentParts || currentParts.length === 0) return;
 
-    const { mfg, layout } = persistSettings();
-
     try {
         log("正在計算並生成 G-code...");
 
-        // Deep copy parts to apply layout transforms without mutating the core data
-        let partsToProcess = JSON.parse(JSON.stringify(currentParts));
-        const angle = layout.rotateAngle || 0;
-
-        partsToProcess = buildArrayParts(partsToProcess, layout);
-
-        if (angle !== 0) {
-            const extentsBeforeRotate = computePartsExtents(partsToProcess);
-            if (extentsBeforeRotate.minX !== Infinity) {
-                const originX = (extentsBeforeRotate.minX + extentsBeforeRotate.maxX) / 2;
-                const originY = (extentsBeforeRotate.minY + extentsBeforeRotate.maxY) / 2;
-                for (const part of partsToProcess) {
-                    rotatePartGeometry(part, angle, originX, originY);
-                }
-            }
-        }
-
-        const extents = computePartsExtents(partsToProcess);
-        const margin = mfg.materialMargin || 4;
-        const effectiveMfg = { ...mfg };
-
-        const activeParts = partsToProcess.filter((part) => ACTIVE_TOOLPATH_MODES.includes(part.toolpathMode));
-        if (activeParts.length === 0) {
-            log('尚未指定任何刀路，無法生成 G-Code。\n請先在左側 2D 視圖：\n1. 點選上方的刀路模式（例如「銑線外」）\n2. 再點擊圖形中的線條，把刀路套用到該線段');
+        const program = buildProgram();
+        if (!program) return;
+        if (program.blocked) {
+            log('尚未指定任何刀路，無法生成 G-Code。\n請先在左側 2D 視圖：\n1. 點選上方的刀路模式（例如「銑線外」）\n2. 再點擊圖形中的線條，把刀路套用到該線段\n（或在「胚料與表面清掃」啟用清掃）');
             return;
         }
 
-        const safetyWarnings = collectSafetyWarnings(partsToProcess, effectiveMfg);
+        update3DToolpath(program.txt, program.viewerMfg);
 
-        const surfaceCleanCount = partsToProcess.filter((part) => part.toolpathMode === 'surface-clean').length;
-        const files = buildAllGcodes(partsToProcess, effectiveMfg);
-        const info = generateMachiningInfo(effectiveMfg, partsToProcess.length, { ...layout, surfaceCleanCount });
-
-        if (files.length > 0) {
-            // Compute extents first so stock dimensions can go in the header comment
-            const stockW = extents.minX !== Infinity ? (extents.maxX - extents.minX) + margin * 2 : 0;
-            const stockH = extents.minY !== Infinity ? (extents.maxY - extents.minY) + margin * 2 : 0;
-            const stockT = effectiveMfg.thickness || 0;
-
-            const mergedLines = [];
-            // Use strict ASCII uppercase and avoid local date strings which might contain Chinese characters
-            const simpleDate = new Date().toISOString().split('T')[0];
-            mergedLines.push(`(SVG TO GCODE EXPORT ${simpleDate})`);
-            if (stockW > 0 && stockH > 0) {
-                mergedLines.push(`(STOCK X${stockW.toFixed(2)} Y${stockH.toFixed(2)} Z${stockT.toFixed(2)} MM)`);
-            }
-            mergedLines.push(`(MATERIAL ${materialCommentName(mfg.materialType)})`);
-
-            // Add global header
-            mergedLines.push(...gcodeHeader(effectiveMfg));
-
-            files.forEach(f => mergedLines.push(f.text));
-
-            // Add global footer
-            mergedLines.push(...gcodeFooter(effectiveMfg));
-
-            let txt = mergedLines.join('\r\n');
-
-            // --- Origin Offset ---
-            let offsetX = 0, offsetY = 0, offsetZ = 0;
-
-            if (extents.minX !== Infinity) {
-                const cx = (extents.minX + extents.maxX) / 2;
-                const cy = (extents.minY + extents.maxY) / 2;
-                const mode = effectiveMfg.originMode;
-
-                // XY: center subtracts midpoint; bottomleft subtracts min corner
-                offsetX = mode.includes('center') ? -cx : -extents.minX;
-                offsetY = mode.includes('center') ? -cy : -extents.minY;
-                // Z: bottom shifts so Z0 = bottom face of material
-                offsetZ = mode.startsWith('bottom') ? effectiveMfg.thickness : 0;
-            }
-
-            txt = applyGcodeOffset(txt, offsetX, offsetY, offsetZ);
-
-            // Mach3 has ancient bugs where letters like 'O' (program number) inside comments
-            // cause "Bad character used" errors. E.g. (DRILL HOLES) -> O followed by L.
-            // Safest fallback is to strip all comments for Mach3.
-            if (effectiveMfg.postProcessor === 'mach3') {
-                txt = txt.split(/\r?\n/)
-                    .map(line => line.replace(/\([^)]*\)/g, '').trim()) // Remove any (...) and trim spaces
-                    .filter(line => line !== '') // Remove resulting empty lines
-                    .join('\r\n');
-            }
-
-            // Update 3D Viewer
-            update3DToolpath(txt, effectiveMfg);
-
-            // Switch to 3D tab
-            if (!tab3D.classList.contains('active')) {
-                tab3D.click();
-            }
-
-            // Download
-            const blob = new Blob([txt], { type: "text/plain" });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = `svg_export_${Date.now()}.nc`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-
-            const originLabels = {
-                'top-center': '頂面中心',
-                'top-bottomleft': '頂面左下角',
-                'bottom-center': '底面中心',
-                'bottom-bottomleft': '底面左下角'
-            };
-            const originLabel = originLabels[effectiveMfg.originMode] || effectiveMfg.originMode;
-
-            const warningBlock = safetyWarnings.length
-                ? `\n\n⚠ 注意：\n${safetyWarnings.map((w) => `- ${w}`).join('\n')}`
-                : '';
-            log(`成功！G-Code 檔案已下載。${warningBlock}\n\n工件原點：${originLabel}\n\n${info}`);
+        // Switch to 3D tab
+        if (!tab3D.classList.contains('active')) {
+            tab3D.click();
         }
+
+        // Download
+        const blob = new Blob([program.txt], { type: "text/plain" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `svg_export_${Date.now()}.nc`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+
+        const warningBlock = program.safetyWarnings.length
+            ? `\n\n⚠ 注意：\n${program.safetyWarnings.map((w) => `- ${w}`).join('\n')}`
+            : '';
+        log(`成功！G-Code 檔案已下載。${warningBlock}\n\n工件原點：${program.originLabel}\n\n${program.info}`);
     } catch (err) {
         log(`生成 G-code 時發生錯誤: ${err.message}`);
     }
 });
+
+// 3D 即時預覽：清掃/胚料參數變更時自動重算刀路並更新 3D 視圖（不下載）
+let livePreviewTimer = null;
+function refreshLivePreview() {
+    if (!currentParts || currentParts.length === 0) return;
+    clearTimeout(livePreviewTimer);
+    livePreviewTimer = setTimeout(() => {
+        try {
+            const program = buildProgram();
+            if (program && !program.blocked) {
+                update3DToolpath(program.txt, program.viewerMfg);
+            }
+        } catch (err) {
+            console.warn('3D 即時預覽更新失敗', err);
+        }
+    }, 250);
+}
 
 // --- Toolpath Ordering Logic ---
 let draggedPartId = null;
@@ -1295,7 +1534,6 @@ function renderToolpathList() {
         if (part.toolpathMode === 'outside') modeLabel = '線外 (Outside)';
         if (part.toolpathMode === 'inside') modeLabel = '線內 (Inside)';
         if (part.toolpathMode === 'drill') modeLabel = '鑽孔 (Drill)';
-        if (part.toolpathMode === 'surface-clean') modeLabel = '清掃 (Face)';
         const partialBadge = part.isPartial
             ? `<span style="margin-left:4px;color:#8b5cf6;font-size:0.78rem;">⬦ 非貫穿 ${part.partialDepth}mm</span>`
             : '';
@@ -1468,6 +1706,62 @@ document.addEventListener('DOMContentLoaded', () => {
             if (sweepStepoverUnitEl) sweepStepoverUnitEl.style.display = 'none';
         }
     }
+
+    // 表面清掃 enable/disable toggle: show facing fields when enabled,
+    // switch the program origin to the 對刀定位點 and refresh both previews
+    const faceEnableCb = document.getElementById('faceEnable');
+    const faceSettingsPanel = document.getElementById('faceSettings');
+    const originModeEl = document.getElementById('originMode');
+
+    const syncOriginModeDisabled = () => {
+        if (!originModeEl || !faceEnableCb) return;
+        originModeEl.disabled = faceEnableCb.checked;
+        originModeEl.title = faceEnableCb.checked
+            ? '已啟用清掃：程式原點改用清掃的刀具定位點（胚料頂面 X0 Y0 Z0）'
+            : '';
+    };
+    syncOriginModeDisabled();
+
+    if (faceEnableCb && faceSettingsPanel) {
+        faceEnableCb.addEventListener('change', () => {
+            faceSettingsPanel.style.display = faceEnableCb.checked ? 'block' : 'none';
+            syncOriginModeDisabled();
+            persistSettings();
+            if (currentParts) {
+                renderPreviewSvg();
+                refreshLivePreview();
+            }
+        });
+    }
+
+    // 深度欄位的意義隨對刀 Z 基準切換：頂面 = 掃掉多少；底面 = 預留量
+    // （從 材料厚度+預留量 掃到 材料厚度，成品工件高精確）
+    const faceDepthLabelEl = document.getElementById('faceDepthLabel');
+    const faceDepthInputEl = document.getElementById('surfaceCleanDepth');
+    const syncFaceDepthLabel = () => {
+        const { zref } = parseFaceOrigin(document.getElementById('faceOrigin')?.value);
+        if (faceDepthLabelEl) {
+            faceDepthLabelEl.textContent = zref === 'bottom' ? '清掃預留量 (mm)' : '清掃總深度 (mm)';
+        }
+        if (faceDepthInputEl) {
+            faceDepthInputEl.title = zref === 'bottom'
+                ? '粗胚高出材料厚度的預估餘量：清掃從 材料厚度+預留量 掃到 材料厚度，成品工件高精確等於材料厚度'
+                : '要從碰刀的粗胚頂面往下掃掉的總厚度';
+        }
+    };
+    syncFaceDepthLabel();
+    document.getElementById('faceOrigin')?.addEventListener('change', syncFaceDepthLabel);
+
+    // 清掃/胚料參數變更 → 2D 疊加層與 3D 刀路即時更新
+    const facePreviewInputIds = ['stockW', 'stockH', 'surfaceCleanDepth', 'faceStepdown', 'faceOverlapPct', 'facePattern', 'faceOrigin', 'toolD', 'thickness'];
+    facePreviewInputIds.forEach((id) => {
+        document.getElementById(id)?.addEventListener('change', () => {
+            if (currentParts && faceEnableCb?.checked) {
+                renderPreviewSvg();
+                refreshLivePreview();
+            }
+        });
+    });
 
     document.querySelectorAll('input[name="toolpathMode"]').forEach(radio => {
         radio.addEventListener('change', updateSweepVisibility);

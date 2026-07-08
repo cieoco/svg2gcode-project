@@ -359,10 +359,6 @@ body {
     stroke-dasharray: 2, 2;
 }
 
-#previewSvg svg *.path-surface-clean {
-    stroke: #10b981 !important;
-}
-
 #previewSvg svg *.path-partial {
     stroke-dasharray: 6, 3 !important;
 }
@@ -765,11 +761,6 @@ body.theme-light #logText {
     color: #f59e0b;
 }
 
-.toolpath-item .mode-badge.surface-clean {
-    background: rgba(16, 185, 129, 0.2);
-    color: #10b981;
-}
-
 .toolpath-list-container {
     border: 1px solid var(--border);
     border-radius: 6px;
@@ -850,4 +841,28 @@ body.mode-simple [data-advanced] {
 
 body:not(.mode-simple) .simple-guide {
     display: none;
+}
+
+/* ===== 清掃 2D 預覽疊加層 ===== */
+#previewSvg svg .face-overlay,
+#previewSvg svg .face-overlay * {
+    pointer-events: none;
+}
+
+#previewSvg svg .face-stock-rect {
+    fill: rgba(16, 185, 129, 0.05) !important;
+    stroke: #10b981 !important;
+    stroke-dasharray: 4, 3;
+}
+
+#previewSvg svg .face-path {
+    fill: none;
+    stroke: #10b981 !important;
+    opacity: 0.45;
+}
+
+#previewSvg svg .face-origin-marker,
+#previewSvg svg .face-origin-cross {
+    fill: none;
+    stroke: #ef4444 !important;
 }

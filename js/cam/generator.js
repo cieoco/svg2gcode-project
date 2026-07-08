@@ -59,37 +59,6 @@ function orientForMaterial(geom, mode, mfg) {
     return isCcw === wantsCcw ? geom : reverseClosedGeom(geom);
 }
 
-function computePartBounds(part) {
-    let minX = Infinity;
-    let maxX = -Infinity;
-    let minY = Infinity;
-    let maxY = -Infinity;
-
-    const includePoint = (pt) => {
-        if (!pt || !Number.isFinite(pt.x) || !Number.isFinite(pt.y)) return;
-        minX = Math.min(minX, pt.x);
-        maxX = Math.max(maxX, pt.x);
-        minY = Math.min(minY, pt.y);
-        maxY = Math.max(maxY, pt.y);
-    };
-
-    if (Array.isArray(part.points)) part.points.forEach(includePoint);
-    if (part.rect) {
-        includePoint({ x: part.rect.x, y: part.rect.y });
-        includePoint({ x: part.rect.x + part.rect.w, y: part.rect.y + part.rect.h });
-    }
-    if (Array.isArray(part.holes)) part.holes.forEach(includePoint);
-    if (Array.isArray(part.slots)) {
-        part.slots.forEach((slot) => {
-            includePoint({ x: slot.x, y: slot.y });
-            includePoint({ x: slot.x + slot.w, y: slot.y + slot.h });
-        });
-    }
-
-    if (minX === Infinity) return null;
-    return { minX, maxX, minY, maxY };
-}
-
 /**
  * 為單個零件生成 G-code
  * @param {Object} part - 零件物件
@@ -153,34 +122,7 @@ export function buildPartGcode(part, mfg) {
 
     const offsetDist = mode === 'outside' ? (mfg.toolD / 2) : mode === 'inside' ? (-mfg.toolD / 2) : 0;
 
-    if (mode === 'surface-clean') {
-        const bounds = computePartBounds(part);
-        const faceDepth = Math.max(0, mfg.surfaceCleanDepth || 0);
-        if (!bounds || !(faceDepth > 0)) {
-            lines.push("(SURFACE CLEAN SKIPPED)");
-            return lines.join("\r\n") + "\r\n";
-        }
-
-        lines.push(
-            ...faceStockOps({
-                x0: bounds.minX,
-                y0: bounds.minY,
-                x1: bounds.maxX,
-                y1: bounds.maxY,
-                toolD: mfg.toolD,
-                stepoverPct: mfg.surfaceCleanStepoverPct,
-                faceDepth,
-                stepdown,
-                safeZ,
-                feedXY,
-                feedZ,
-                topZ
-            })
-        );
-        return lines.join("\r\n") + "\r\n";
-    }
-
-    // 1. Drill operation specifically selected by user 
+    // 1. Drill operation specifically selected by user
     if (mode === 'drill') {
         lines.push("(DRILL SELECTED POINT)");
         // Calculate center of bounding box
@@ -379,14 +321,37 @@ export function buildPartGcode(part, mfg) {
 export function buildAllGcodes(parts, mfg) {
     const files = [];
     let stockTopZ = Number.isFinite(mfg.stockTopZ) ? mfg.stockTopZ : 0;
+
+    // 胚料表面清掃：獨立於工件的前置作業，先整平胚料頂面，
+    // 之後所有工件刀路都從掃平後的新頂面 (stockTopZ) 起算
+    const faceDepth = Math.max(0, mfg.surfaceCleanDepth || 0);
+    if (mfg.faceEnable && faceDepth > 0 && mfg.stockBounds) {
+        const faceLines = faceStockOps({
+            x0: mfg.stockBounds.minX,
+            y0: mfg.stockBounds.minY,
+            x1: mfg.stockBounds.maxX,
+            y1: mfg.stockBounds.maxY,
+            toolD: mfg.toolD,
+            overlapPct: mfg.faceOverlapPct,
+            faceDepth,
+            faceStepdown: mfg.faceStepdown,
+            safeZ: mfg.safeZ,
+            feedXY: mfg.feedXY,
+            feedZ: mfg.feedZ,
+            topZ: stockTopZ,
+            pattern: mfg.facePattern,
+            startCorner: mfg.faceOriginCorner === 'center' || !mfg.faceOriginCorner ? 'bl' : mfg.faceOriginCorner
+        });
+        if (faceLines.length > 0) {
+            files.push({ name: 'facing.nc', text: faceLines.join("\r\n") + "\r\n" });
+            stockTopZ -= faceDepth;
+        }
+    }
+
     for (const p of parts) {
         const opMfg = { ...mfg, stockTopZ };
         const g = buildPartGcode(p, opMfg);
         files.push({ name: `${p.id}.nc`, text: g });
-        if (p.toolpathMode === 'surface-clean') {
-            const faceDepth = Math.max(0, mfg.surfaceCleanDepth || 0);
-            if (faceDepth > 0) stockTopZ -= faceDepth;
-        }
     }
     return files;
 }
@@ -418,10 +383,25 @@ export function generateMachiningInfo(mfg, partCount, layout = {}) {
     }
     info.push(`- 材料厚度：${mfg.thickness.toFixed(2)} mm`);
     info.push(`- 總切深：${cutDepth.toFixed(2)} mm`);
-    const surfaceCleanCount = Math.max(0, Math.round(layout.surfaceCleanCount || 0));
-    if (surfaceCleanCount > 0 && Number.isFinite(mfg.surfaceCleanDepth) && mfg.surfaceCleanDepth > 0) {
-        const finalTopZ = stockTopZ - surfaceCleanCount * mfg.surfaceCleanDepth;
-        info.push(`- 胚料表面清掃：${surfaceCleanCount} 道，單道深度 ${mfg.surfaceCleanDepth.toFixed(2)} mm，步距 ${mfg.surfaceCleanStepoverPct.toFixed(0)}% 刀徑，清掃後頂面約 Z${finalTopZ.toFixed(2)}`);
+    if (mfg.stockBounds) {
+        const sw = mfg.stockBounds.maxX - mfg.stockBounds.minX;
+        const sh = mfg.stockBounds.maxY - mfg.stockBounds.minY;
+        info.push(`- 胚料尺寸：${sw.toFixed(1)} × ${sh.toFixed(1)} × ${mfg.thickness.toFixed(1)} mm`);
+    }
+    if (mfg.faceEnable && Number.isFinite(mfg.surfaceCleanDepth) && mfg.surfaceCleanDepth > 0) {
+        const patternName = mfg.facePattern === 'spiral' ? '環繞（外→內）' : '往復（Zigzag）';
+        const cornerNames = { bl: '胚料左下角', br: '胚料右下角', tl: '胚料左上角', tr: '胚料右上角', center: '胚料中心' };
+        const cornerName = cornerNames[mfg.faceOriginCorner] || cornerNames.bl;
+        const perPass = Number.isFinite(mfg.faceStepdown) && mfg.faceStepdown > 0 ? mfg.faceStepdown : mfg.surfaceCleanDepth;
+        const isBottomRef = mfg.faceOriginZ === 'bottom';
+        info.push(`- 胚料表面清掃：${isBottomRef ? '預留量' : '總深度'} ${mfg.surfaceCleanDepth.toFixed(2)} mm，每層下切 ${perPass.toFixed(2)} mm，${patternName}，重疊 ${Number(mfg.faceOverlapPct || 40).toFixed(0)}% 刀徑`);
+        if (isBottomRef) {
+            // 底面模式下 mfg.thickness 已是粗胚厚度（成品高 + 預留量）
+            const finalHeight = mfg.thickness - mfg.surfaceCleanDepth;
+            info.push(`- 對刀定位點：${cornerName}・底面（床台 X0 Y0 Z0），清掃從 Z${mfg.thickness.toFixed(2)} 掃到 Z${finalHeight.toFixed(2)}，成品工件高 = ${finalHeight.toFixed(2)} mm`);
+        } else {
+            info.push(`- 對刀定位點：${cornerName}・頂面（X0 Y0 Z0），清掃後頂面 Z${(stockTopZ - mfg.surfaceCleanDepth).toFixed(2)}`);
+        }
     }
     info.push(`- 每層下刀：${mfg.stepdown.toFixed(2)} mm`);
     info.push(`- 切割層數：${layers}`);
