@@ -156,6 +156,7 @@ const DEFAULT_SETTINGS = {
     thickness: 7,
     stockW: 0,
     stockH: 0,
+    stockT: 0,
     overcut: 0,
     stepdown: DEFAULT_MATERIAL_VALUES.stepdown,
     safeZ: 10,
@@ -863,6 +864,7 @@ function applySettingsToUi(settings = {}) {
         'thickness',
         'stockW',
         'stockH',
+        'stockT',
         'overcut',
         'stepdown',
         'feedXY',
@@ -989,6 +991,7 @@ function getMfgData() {
         thickness: readNum('thickness', 7),
         stockW: readNum('stockW', 0),
         stockH: readNum('stockH', 0),
+        stockT: readNum('stockT', 0),
         faceEnable: readBool('faceEnable'),
         overcut: readNum('overcut', 0.0),
         stepdown: readNum('stepdown', 1.5),
@@ -1316,20 +1319,41 @@ function buildProgram() {
     }
 
     const activeParts = partsToProcess.filter((part) => ACTIVE_TOOLPATH_MODES.includes(part.toolpathMode));
+
+    // 清掃 Z 模型：材料厚度 = 成品工件高；胚料厚度 = 粗胚實際量測值。
+    //  - 頂面對刀（第一次清掃，取真平）：掃掉「清掃總深度」。
+    //  - 底面對刀（翻面/最終取高）：清掃量自動 = 胚料厚 − 材料厚，
+    //    未量測胚料厚（0）時退回手動「預留量」。
+    const faceUserDepth = Math.max(0, mfg.surfaceCleanDepth || 0);
+    const finalHeight = mfg.thickness || 0;
+    let faceRoughT;
+    let faceDepth;
+    if (faceOriginParsed.zref === 'bottom') {
+        faceRoughT = mfg.stockT > 0 ? mfg.stockT : finalHeight + faceUserDepth;
+        faceDepth = Math.max(0, faceRoughT - finalHeight);
+    } else {
+        faceRoughT = mfg.stockT > 0 ? Math.max(mfg.stockT, finalHeight) : finalHeight;
+        faceDepth = faceUserDepth;
+    }
+
     const faceActive = Boolean(effectiveMfg.faceEnable)
-        && (effectiveMfg.surfaceCleanDepth || 0) > 0
+        && faceDepth > 0
         && Boolean(effectiveMfg.stockBounds);
     if (activeParts.length === 0 && !faceActive) {
         return { blocked: true };
     }
 
-    if (faceActive && faceOriginParsed.zref === 'bottom') {
-        // 底面對刀：使用者填的材料厚度 = 成品工件高，粗胚 = 厚度 + 預留量。
-        // 內部幾何一律以粗胚厚度計算，切穿深度與支撐橋高度才會正確
-        effectiveMfg.thickness = (mfg.thickness || 0) + Math.max(0, mfg.surfaceCleanDepth || 0);
+    if (faceActive) {
+        // 內部幾何一律以粗胚厚度計算：切穿深度、支撐橋高度、STOCK 註解
+        // 與 3D 胚料框才會落在正確的實體位置
+        effectiveMfg.thickness = faceRoughT;
+        effectiveMfg.surfaceCleanDepth = faceDepth;
     }
 
     const safetyWarnings = collectSafetyWarnings(partsToProcess, effectiveMfg);
+    if (Boolean(mfg.faceEnable) && mfg.stockT > 0 && mfg.stockT < finalHeight - 1e-6) {
+        safetyWarnings.push(`胚料厚度 ${mfg.stockT.toFixed(2)} mm 小於材料厚度 ${finalHeight.toFixed(2)} mm，掃不出目標工件高，請確認量測值。`);
+    }
     if (stockTooSmall) {
         const designW = extents.maxX - extents.minX;
         const designH = extents.maxY - extents.minY;
@@ -1734,26 +1758,41 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // 深度欄位的意義隨對刀 Z 基準切換：頂面 = 掃掉多少；底面 = 預留量
-    // （從 材料厚度+預留量 掃到 材料厚度，成品工件高精確）
+    // 深度欄位隨對刀 Z 基準切換意義：
+    //  - 頂面：手動「清掃總深度」（第一次清掃取真平）
+    //  - 底面 + 已量測胚料厚：自動 = 胚料厚 − 材料厚，欄位唯讀
+    //  - 底面 + 未量測（胚料厚 0）：手動「預留量」
     const faceDepthLabelEl = document.getElementById('faceDepthLabel');
     const faceDepthInputEl = document.getElementById('surfaceCleanDepth');
-    const syncFaceDepthLabel = () => {
+    const syncFaceDepthField = () => {
+        if (!faceDepthLabelEl || !faceDepthInputEl) return;
         const { zref } = parseFaceOrigin(document.getElementById('faceOrigin')?.value);
-        if (faceDepthLabelEl) {
-            faceDepthLabelEl.textContent = zref === 'bottom' ? '清掃預留量 (mm)' : '清掃總深度 (mm)';
-        }
-        if (faceDepthInputEl) {
-            faceDepthInputEl.title = zref === 'bottom'
-                ? '粗胚高出材料厚度的預估餘量：清掃從 材料厚度+預留量 掃到 材料厚度，成品工件高精確等於材料厚度'
-                : '要從碰刀的粗胚頂面往下掃掉的總厚度';
+        const stockTVal = parseFloat(document.getElementById('stockT')?.value) || 0;
+        const thicknessVal = parseFloat(document.getElementById('thickness')?.value) || 0;
+
+        if (zref === 'bottom' && stockTVal > 0) {
+            const autoDepth = Math.max(0, stockTVal - thicknessVal);
+            faceDepthInputEl.value = Math.round(autoDepth * 1000) / 1000;
+            faceDepthInputEl.readOnly = true;
+            faceDepthLabelEl.textContent = '清掃量（自動）(mm)';
+            faceDepthInputEl.title = '自動計算：胚料厚度 − 材料厚度。清掃到成品工件高 = 材料厚度';
+        } else if (zref === 'bottom') {
+            faceDepthInputEl.readOnly = false;
+            faceDepthLabelEl.textContent = '清掃預留量 (mm)';
+            faceDepthInputEl.title = '未量測胚料厚度：手動填粗胚高出材料厚度的預估餘量，清掃到成品工件高 = 材料厚度';
+        } else {
+            faceDepthInputEl.readOnly = false;
+            faceDepthLabelEl.textContent = '清掃總深度 (mm)';
+            faceDepthInputEl.title = '要從碰刀的粗胚頂面往下掃掉的總厚度（第一次清掃取真平）';
         }
     };
-    syncFaceDepthLabel();
-    document.getElementById('faceOrigin')?.addEventListener('change', syncFaceDepthLabel);
+    syncFaceDepthField();
+    ['faceOrigin', 'stockT', 'thickness', 'materialType'].forEach((id) => {
+        document.getElementById(id)?.addEventListener('change', syncFaceDepthField);
+    });
 
     // 清掃/胚料參數變更 → 2D 疊加層與 3D 刀路即時更新
-    const facePreviewInputIds = ['stockW', 'stockH', 'surfaceCleanDepth', 'faceStepdown', 'faceOverlapPct', 'facePattern', 'faceOrigin', 'toolD', 'thickness'];
+    const facePreviewInputIds = ['stockW', 'stockH', 'stockT', 'surfaceCleanDepth', 'faceStepdown', 'faceOverlapPct', 'facePattern', 'faceOrigin', 'toolD', 'thickness'];
     facePreviewInputIds.forEach((id) => {
         document.getElementById(id)?.addEventListener('change', () => {
             if (currentParts && faceEnableCb?.checked) {

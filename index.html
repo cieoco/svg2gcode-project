@@ -315,6 +315,10 @@
                                 <label class="kv-label" for="stockH">胚料寬度 Y (mm)</label>
                                 <input class="kv-field" type="number" id="stockH" value="0" step="1" min="0" title="矩形胚料的 Y 方向尺寸，載入檔案時自動帶入圖形範圍，0 代表自動">
                             </div>
+                            <div class="kv-row">
+                                <label class="kv-label" for="stockT">胚料厚度 Z (mm)</label>
+                                <input class="kv-field" type="number" id="stockT" value="0" step="0.1" min="0" title="粗胚的實際量測厚度（會大於材料厚度）。底面對刀時清掃量自動 = 胚料厚 − 材料厚。0 = 未量測">
+                            </div>
                         </div>
                         <div id="faceSettings" style="display:none;">
                             <div class="settings-kv">
