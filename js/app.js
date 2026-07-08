@@ -176,6 +176,7 @@ const DEFAULT_SETTINGS = {
     facePattern: 'zigzag',
     faceOrigin: 'bl-top',
     faceEnable: false,
+    optimizeOrderEnable: true,
     tabEnabled: false,
     tabCount: 4,
     tabWidth: 4,
@@ -917,7 +918,8 @@ function applySettingsToUi(settings = {}) {
 
     const checkboxFields = [
         'rampEnable',
-        'coolantEnable'
+        'coolantEnable',
+        'optimizeOrderEnable'
     ];
     checkboxFields.forEach((id) => {
         if (settings[id] === undefined) return;
@@ -1012,6 +1014,7 @@ function getMfgData() {
         stockH: readNum('stockH', 0),
         stockT: readNum('stockT', 0),
         faceEnable: readBool('faceEnable'),
+        optimizeOrderEnable: document.getElementById('optimizeOrderEnable') ? readBool('optimizeOrderEnable') : true,
         overcut: readNum('overcut', 0.0),
         stepdown: readNum('stepdown', 1.5),
         feedXY: readNum('feedXY', 1000),
@@ -1238,7 +1241,12 @@ function computePartBounds(part) {
         if (pt.y > maxY) maxY = pt.y;
     }
     if (minX === Infinity) return null;
-    return { width: maxX - minX, height: maxY - minY };
+    return {
+        width: maxX - minX,
+        height: maxY - minY,
+        centerX: (minX + maxX) / 2,
+        centerY: (minY + maxY) / 2
+    };
 }
 
 // 傻瓜級防呆：生成前檢查常見的參數/幾何衝突，回傳警告文字陣列（不阻擋生成）
@@ -1307,6 +1315,17 @@ function buildProgram() {
             for (const part of partsToProcess) {
                 rotatePartGeometry(part, angle, originX, originY);
             }
+        }
+    }
+
+    // 最短路徑：生成時自動重排加工順序（含陣列複本間的空移），
+    // 分組規則不變：非外輪廓先加工、銑線外輪廓最後
+    let orderOptimizeInfo = null;
+    if (mfg.optimizeOrderEnable) {
+        const optimized = computeOptimizedOrder(partsToProcess);
+        if (optimized && optimized.after < optimized.before - 1e-6) {
+            partsToProcess = optimized.order;
+            orderOptimizeInfo = { before: optimized.before, after: optimized.after };
         }
     }
 
@@ -1479,7 +1498,7 @@ function buildProgram() {
         viewerMfg.originMode = faceOriginParsed.zref === 'bottom' ? 'bottom-face' : 'top-face';
     }
 
-    return { txt, viewerMfg, info, safetyWarnings, originLabel };
+    return { txt, viewerMfg, info, safetyWarnings, originLabel, orderOptimizeInfo };
 }
 
 // 生成鈕：有零件、或（純清掃）啟用清掃且胚料長寬已填，才可按
@@ -1520,10 +1539,22 @@ generateBtn.addEventListener('click', () => {
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
 
+        // 讓加工順序清單同步顯示實際的（優化後）順序
+        if (program.orderOptimizeInfo) {
+            const listOptimized = computeOptimizedOrder(currentParts);
+            if (listOptimized) {
+                currentParts = listOptimized.order;
+                renderToolpathList();
+            }
+        }
+
+        const optimizeLine = program.orderOptimizeInfo
+            ? `\n空移優化：${program.orderOptimizeInfo.before.toFixed(0)} mm → ${program.orderOptimizeInfo.after.toFixed(0)} mm（省 ${Math.max(0, (1 - program.orderOptimizeInfo.after / program.orderOptimizeInfo.before) * 100).toFixed(0)}%）`
+            : '';
         const warningBlock = program.safetyWarnings.length
             ? `\n\n⚠ 注意：\n${program.safetyWarnings.map((w) => `- ${w}`).join('\n')}`
             : '';
-        log(`成功！G-Code 檔案已下載。${warningBlock}\n\n工件原點：${program.originLabel}\n\n${program.info}`);
+        log(`成功！G-Code 檔案已下載。${optimizeLine}${warningBlock}\n\n工件原點：${program.originLabel}\n\n${program.info}`);
     } catch (err) {
         log(`生成 G-code 時發生錯誤: ${err.message}`);
     }
@@ -1543,6 +1574,96 @@ function refreshLivePreview() {
             console.warn('3D 即時預覽更新失敗', err);
         }
     }, 250);
+}
+
+// --- 加工順序優化：最近鄰 + 2-opt，減少零件間的空移距離。
+// 純函式：回傳新順序與前後空移估計，不動輸入陣列；零件太少回傳 null ---
+function computeOptimizedOrder(parts) {
+    if (!Array.isArray(parts) || parts.length < 3) return null;
+
+    const centers = new Map();
+    parts.forEach((part) => {
+        const b = computePartBounds(part);
+        centers.set(part.id, b ? { x: b.centerX, y: b.centerY } : { x: 0, y: 0 });
+    });
+    const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+    const travelOf = (parts, start) => {
+        let total = 0;
+        let cur = start;
+        for (const p of parts) {
+            const c = centers.get(p.id);
+            total += dist(cur, c);
+            cur = c;
+        }
+        return total;
+    };
+
+    // 起點：整體圖形的左下角（接近常用的工作原點位置）
+    const ext = computePartsExtents(parts);
+    const start = ext.minX !== Infinity ? { x: ext.minX, y: ext.minY } : { x: 0, y: 0 };
+
+    // 分組：銑線外輪廓永遠留在最後（先切外框零件會鬆動），
+    // 「不加工」的路徑放到清單尾端（不產生刀路）
+    const cutFirst = parts.filter((p) => ACTIVE_TOOLPATH_MODES.includes(p.toolpathMode) && p.toolpathMode !== 'outside');
+    const outsideParts = parts.filter((p) => p.toolpathMode === 'outside');
+    const inactiveParts = parts.filter((p) => !ACTIVE_TOOLPATH_MODES.includes(p.toolpathMode));
+
+    const routeGroup = (parts, from) => {
+        if (parts.length === 0) return { order: [], end: from };
+        // 最近鄰建初始順序
+        const remaining = [...parts];
+        const order = [];
+        let cur = from;
+        while (remaining.length) {
+            let bestIndex = 0;
+            let bestDist = Infinity;
+            remaining.forEach((p, i) => {
+                const d = dist(cur, centers.get(p.id));
+                if (d < bestDist) { bestDist = d; bestIndex = i; }
+            });
+            const next = remaining.splice(bestIndex, 1)[0];
+            order.push(next);
+            cur = centers.get(next.id);
+        }
+        // 2-opt 反轉改善
+        let improved = true;
+        let guard = 0;
+        while (improved && guard++ < 25) {
+            improved = false;
+            for (let i = 0; i < order.length - 1; i++) {
+                for (let j = i + 1; j < order.length; j++) {
+                    const a = i === 0 ? from : centers.get(order[i - 1].id);
+                    const b = centers.get(order[i].id);
+                    const c = centers.get(order[j].id);
+                    const next = j === order.length - 1 ? null : centers.get(order[j + 1].id);
+                    const curLen = dist(a, b) + (next ? dist(c, next) : 0);
+                    const altLen = dist(a, c) + (next ? dist(b, next) : 0);
+                    if (altLen + 1e-9 < curLen) {
+                        let lo = i, hi = j;
+                        while (lo < hi) {
+                            const t = order[lo];
+                            order[lo] = order[hi];
+                            order[hi] = t;
+                            lo++; hi--;
+                        }
+                        improved = true;
+                    }
+                }
+            }
+        }
+        return { order, end: centers.get(order[order.length - 1].id) };
+    };
+
+    const activeBefore = parts.filter((p) => ACTIVE_TOOLPATH_MODES.includes(p.toolpathMode));
+    if (activeBefore.length < 3) return null;
+    const before = travelOf(activeBefore, start);
+
+    const firstLeg = routeGroup(cutFirst, start);
+    const outsideLeg = routeGroup(outsideParts, firstLeg.end);
+    const order = [...firstLeg.order, ...outsideLeg.order, ...inactiveParts];
+    const after = travelOf([...firstLeg.order, ...outsideLeg.order], start);
+
+    return { order, before, after };
 }
 
 // --- Toolpath Ordering Logic ---
@@ -1730,6 +1851,7 @@ document.addEventListener('DOMContentLoaded', () => {
             resetSettingsToDefaults();
         });
     }
+
 
     // Partial checkbox: show/hide depth input
     const partialCheckEl = document.getElementById('partialCheck');

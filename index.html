@@ -395,7 +395,14 @@
                 <div class="settings-section pane settings-subpanel collapsible-panel">
                     <div class="section-header panel-header">
                         <h2 class="subpanel-title">加工順序 (上下拖曳以排序)</h2>
+                        <div class="panel-header-actions">
+                        <label class="panel-inline-check"
+                            title="生成 G-Code 時自動以最短空移距離重排加工順序（鑽孔/內銑等先加工，銑線外輪廓保持最後）。取消勾選則完全依清單順序加工">
+                            <input type="checkbox" id="optimizeOrderEnable" checked style="width:14px;height:14px;">
+                            ⚡ 最短路徑
+                        </label>
                         <button type="button" class="panel-toggle-btn" data-panel-toggle="toolpathOrderBody" aria-expanded="false" aria-label="展開加工順序">+</button>
+                        </div>
                     </div>
                     <div class="panel-content" id="toolpathOrderBody" hidden>
                     <div class="toolpath-list-container" id="toolpathList">
