@@ -562,9 +562,28 @@ function buildFaceOverlaySvg({ minX, maxX, minDisplayY, maxDisplayY, flipY }) {
     };
 }
 
+// 純清掃（無設計圖）的 2D 預覽：只畫胚料矩形、清掃路徑與定位點
+function buildFacingOnlyPreviewSvg() {
+    if (!document.getElementById('faceEnable')?.checked) return '';
+    const w = parseFloat(document.getElementById('stockW')?.value) || 0;
+    const h = parseFloat(document.getElementById('stockH')?.value) || 0;
+    if (!(w > 0) || !(h > 0)) return '';
+
+    // 用胚料本身當顯示範圍；flipY=true 讓機器座標的下緣顯示在畫面下方
+    const overlay = buildFaceOverlaySvg({ minX: 0, maxX: w, minDisplayY: 0, maxDisplayY: h, flipY: true });
+    if (!overlay) return '';
+
+    const b = overlay.bounds;
+    const vw = Math.max(1e-6, b.maxX - b.minX);
+    const vh = Math.max(1e-6, b.maxY - b.minY);
+    const pad = Math.max(2, Math.max(vw, vh) * 0.05);
+    const viewBox = `${(b.minX - pad).toFixed(3)} ${(b.minY - pad).toFixed(3)} ${(vw + pad * 2).toFixed(3)} ${(vh + pad * 2).toFixed(3)}`;
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}" preserveAspectRatio="xMidYMid meet">${overlay.markup}</svg>`;
+}
+
 function renderPreviewSvg() {
     if (!currentParts || currentParts.length === 0) {
-        previewSvg.innerHTML = '';
+        previewSvg.innerHTML = buildFacingOnlyPreviewSvg();
         return;
     }
 
@@ -588,7 +607,7 @@ function processFile(file) {
     const dxfFile = isDxfFile(file);
     if (!svgFile && !dxfFile) {
         log("不支援的檔案格式，請使用 SVG 或 DXF。");
-        generateBtn.disabled = true;
+        updateGenerateButtonState();
         return;
     }
 
@@ -612,7 +631,7 @@ function processFile(file) {
 
             const sourceLabel = svgFile ? 'SVG' : 'DXF';
             log(`已從 ${sourceLabel} 成功解析出 ${currentParts.length} 個切削零件路徑。`);
-            generateBtn.disabled = currentParts.length === 0;
+            updateGenerateButtonState();
 
             // 預設胚料 = 圖形外接矩形（無條件進位到整數 mm），可再手動改大
             const designExtents = computePartsExtents(currentParts);
@@ -631,7 +650,7 @@ function processFile(file) {
 
         } catch (err) {
             log(`解析檔案時發生錯誤: ${err.message}`);
-            generateBtn.disabled = true;
+            updateGenerateButtonState();
         }
     };
     reader.readAsText(file);
@@ -1267,14 +1286,15 @@ function parseFaceOrigin(value) {
     return { corner, zref };
 }
 
-// 組出完整 G-Code 程式：generate（下載）與 3D 即時預覽共用同一條路徑
+// 組出完整 G-Code 程式：generate（下載）與 3D 即時預覽共用同一條路徑。
+// 沒有載入設計檔也能跑「純清掃」：只要啟用清掃並填好胚料長寬。
 function buildProgram() {
-    if (!currentParts || currentParts.length === 0) return null;
+    const sourceParts = Array.isArray(currentParts) ? currentParts : [];
 
     const { mfg, layout } = persistSettings();
 
     // Deep copy parts to apply layout transforms without mutating the core data
-    let partsToProcess = JSON.parse(JSON.stringify(currentParts));
+    let partsToProcess = JSON.parse(JSON.stringify(sourceParts));
     const angle = layout.rotateAngle || 0;
 
     partsToProcess = buildArrayParts(partsToProcess, layout);
@@ -1316,6 +1336,11 @@ function buildProgram() {
             maxX: cx + stockW / 2,
             maxY: cy + stockH / 2
         };
+    } else if (mfg.stockW > 0 && mfg.stockH > 0) {
+        // 純清掃（無設計圖）：胚料以自身尺寸定位，原點交給對刀定位點
+        stockW = mfg.stockW;
+        stockH = mfg.stockH;
+        effectiveMfg.stockBounds = { minX: 0, minY: 0, maxX: stockW, maxY: stockH };
     }
 
     const activeParts = partsToProcess.filter((part) => ACTIVE_TOOLPATH_MODES.includes(part.toolpathMode));
@@ -1457,16 +1482,23 @@ function buildProgram() {
     return { txt, viewerMfg, info, safetyWarnings, originLabel };
 }
 
-generateBtn.addEventListener('click', () => {
-    if (!currentParts || currentParts.length === 0) return;
+// 生成鈕：有零件、或（純清掃）啟用清掃且胚料長寬已填，才可按
+function updateGenerateButtonState() {
+    const hasParts = Boolean(currentParts && currentParts.length > 0);
+    const faceReady = Boolean(document.getElementById('faceEnable')?.checked)
+        && (parseFloat(document.getElementById('stockW')?.value) || 0) > 0
+        && (parseFloat(document.getElementById('stockH')?.value) || 0) > 0;
+    generateBtn.disabled = !hasParts && !faceReady;
+}
 
+generateBtn.addEventListener('click', () => {
     try {
         log("正在計算並生成 G-code...");
 
         const program = buildProgram();
         if (!program) return;
         if (program.blocked) {
-            log('尚未指定任何刀路，無法生成 G-Code。\n請先在左側 2D 視圖：\n1. 點選上方的刀路模式（例如「銑線外」）\n2. 再點擊圖形中的線條，把刀路套用到該線段\n（或在「胚料與表面清掃」啟用清掃）');
+            log('尚未指定任何刀路，無法生成 G-Code。\n請先在左側 2D 視圖：\n1. 點選上方的刀路模式（例如「銑線外」）\n2. 再點擊圖形中的線條，把刀路套用到該線段\n（或在「胚料與表面清掃」啟用清掃並填好胚料長寬）');
             return;
         }
 
@@ -1500,7 +1532,6 @@ generateBtn.addEventListener('click', () => {
 // 3D 即時預覽：清掃/胚料參數變更時自動重算刀路並更新 3D 視圖（不下載）
 let livePreviewTimer = null;
 function refreshLivePreview() {
-    if (!currentParts || currentParts.length === 0) return;
     clearTimeout(livePreviewTimer);
     livePreviewTimer = setTimeout(() => {
         try {
@@ -1751,10 +1782,9 @@ document.addEventListener('DOMContentLoaded', () => {
             faceSettingsPanel.style.display = faceEnableCb.checked ? 'block' : 'none';
             syncOriginModeDisabled();
             persistSettings();
-            if (currentParts) {
-                renderPreviewSvg();
-                refreshLivePreview();
-            }
+            updateGenerateButtonState();
+            renderPreviewSvg();
+            refreshLivePreview();
         });
     }
 
@@ -1795,12 +1825,16 @@ document.addEventListener('DOMContentLoaded', () => {
     const facePreviewInputIds = ['stockW', 'stockH', 'stockT', 'surfaceCleanDepth', 'faceStepdown', 'faceOverlapPct', 'facePattern', 'faceOrigin', 'toolD', 'thickness'];
     facePreviewInputIds.forEach((id) => {
         document.getElementById(id)?.addEventListener('change', () => {
-            if (currentParts && faceEnableCb?.checked) {
+            if (faceEnableCb?.checked) {
+                updateGenerateButtonState();
                 renderPreviewSvg();
                 refreshLivePreview();
             }
         });
     });
+
+    // 還原儲存設定後（可能已勾清掃），校正生成鈕狀態
+    updateGenerateButtonState();
 
     document.querySelectorAll('input[name="toolpathMode"]').forEach(radio => {
         radio.addEventListener('change', updateSweepVisibility);
