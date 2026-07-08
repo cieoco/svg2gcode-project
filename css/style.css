@@ -783,3 +783,71 @@ body.theme-light #logText {
         gap: 0.45rem;
     }
 }
+
+/* ===== UI Mode Switch (傻瓜模式 / 工程模式) ===== */
+.header-controls {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.mode-switch {
+    display: flex;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+}
+
+.mode-switch .mode-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    padding: 0.4rem 0.9rem;
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+    font-family: inherit;
+}
+
+.mode-switch .mode-btn + .mode-btn {
+    border-left: 1px solid var(--border);
+}
+
+.mode-switch .mode-btn:hover {
+    color: var(--text-main);
+}
+
+.mode-switch .mode-btn.active {
+    background: rgba(0, 229, 255, 0.15);
+    color: var(--primary);
+}
+
+/* 傻瓜模式：隱藏進階面板與欄位 */
+body.mode-simple [data-advanced] {
+    display: none !important;
+}
+
+/* 步驟導引列（僅傻瓜模式顯示） */
+.simple-guide {
+    padding: 0.7rem 1rem;
+    border: 1px dashed var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+    color: var(--text-muted);
+    font-size: 0.82rem;
+    line-height: 1.9;
+}
+
+.simple-guide .guide-step {
+    color: var(--primary);
+    font-weight: 600;
+    margin-left: 0.35rem;
+}
+
+.simple-guide .guide-step:first-child {
+    margin-left: 0;
+}
+
+body:not(.mode-simple) .simple-guide {
+    display: none;
+}

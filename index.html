@@ -31,12 +31,18 @@
                     <p class="app-subtitle">快速、免安裝的本機 SVG / DXF 轉 CNC 加工路徑工具</p>
                 </div>
             </div>
-            <div class="theme-switch">
-                <label for="themeSelect">風格</label>
-                <select id="themeSelect">
-                    <option value="dark" selected>深色</option>
-                    <option value="light">淺色</option>
-                </select>
+            <div class="header-controls">
+                <div class="mode-switch" id="uiModeSwitch" title="傻瓜模式:只顯示必要選項;工程模式:顯示全部 CAM 參數">
+                    <button type="button" id="modeSimpleBtn" class="mode-btn active">傻瓜模式</button>
+                    <button type="button" id="modeEngineerBtn" class="mode-btn">工程模式</button>
+                </div>
+                <div class="theme-switch">
+                    <label for="themeSelect">風格</label>
+                    <select id="themeSelect">
+                        <option value="dark" selected>深色</option>
+                        <option value="light">淺色</option>
+                    </select>
+                </div>
             </div>
         </header>
 
@@ -164,7 +170,13 @@
 
             <!-- Right Side: Settings -->
             <div class="settings-column">
-            <div class="settings-section pane collapsible-panel">
+            <div class="simple-guide">
+                <span class="guide-step">①</span> 拖入 SVG / DXF
+                <span class="guide-step">②</span> 點選圖形、指定刀路
+                <span class="guide-step">③</span> 選材料 / 厚度 / 刀徑
+                <span class="guide-step">④</span> 生成下載
+            </div>
+            <div class="settings-section pane collapsible-panel" data-advanced>
                 <div class="section-header panel-header">
                     <h2>版面與變換</h2>
                     <button type="button" class="panel-toggle-btn" data-panel-toggle="layoutSettingsBody" aria-expanded="false" aria-label="展開版面與變換">+</button>
@@ -216,39 +228,39 @@
                         <label class="kv-label" for="thickness">材料厚度 (mm)</label>
                         <input class="kv-field" type="number" id="thickness" value="7" step="0.5">
                     </div>
-                    <div class="kv-row">
+                    <div class="kv-row" data-advanced>
                         <label class="kv-label" for="materialMargin">胚料邊距 (mm)</label>
                         <input class="kv-field" type="number" id="materialMargin" value="4" step="1" title="3D預覽中胚料大於圖形的邊距">
                     </div>
-                    <div class="kv-row">
+                    <div class="kv-row" data-advanced>
                         <label class="kv-label" for="surfaceCleanDepth">表面清掃深度 (mm)</label>
                         <input class="kv-field" type="number" id="surfaceCleanDepth" value="0.2" step="0.05" min="0" title="從目前 Z0 往下掃平的深度">
                     </div>
-                    <div class="kv-row">
+                    <div class="kv-row" data-advanced>
                         <label class="kv-label" for="surfaceCleanStepoverPct">表面清掃步距 (% 刀徑)</label>
                         <input class="kv-field" type="number" id="surfaceCleanStepoverPct" value="60" step="5" min="5" max="95" title="每條面銑刀路的橫向間距，100% 等於一個刀徑">
                     </div>
-                    <div class="kv-row">
+                    <div class="kv-row" data-advanced>
                         <label class="kv-label" for="overcut">過切深度 / Overcut (mm)</label>
                         <input class="kv-field" type="number" id="overcut" value="0.0" step="0.1">
                     </div>
-                    <div class="kv-row">
+                    <div class="kv-row" data-advanced>
                         <label class="kv-label" for="stepdown">每層下刀量 (mm)</label>
                         <input class="kv-field" type="number" id="stepdown" value="2" step="0.1" min="0.01">
                     </div>
-                    <div class="kv-row">
+                    <div class="kv-row" data-advanced>
                         <label class="kv-label" for="safeZ">安全高度 Safe Z (mm)</label>
                         <input class="kv-field" type="number" id="safeZ" value="10" step="1">
                     </div>
-                    <div class="kv-row">
+                    <div class="kv-row" data-advanced>
                         <label class="kv-label" for="feedXY">XY 軸進給率 (mm/min)</label>
                         <input class="kv-field" type="number" id="feedXY" value="1400" step="100">
                     </div>
-                    <div class="kv-row">
+                    <div class="kv-row" data-advanced>
                         <label class="kv-label" for="feedZ">Z 軸下刀進給率 (mm/min)</label>
                         <input class="kv-field" type="number" id="feedZ" value="450" step="50">
                     </div>
-                    <div class="kv-row">
+                    <div class="kv-row" data-advanced>
                         <label class="kv-label" for="spindle">主軸轉速 (RPM)</label>
                         <input class="kv-field" type="number" id="spindle" value="12000" step="1000">
                     </div>
@@ -256,22 +268,22 @@
                         <label class="kv-label" for="toolD">刀具直徑 (mm)</label>
                         <input class="kv-field" type="number" id="toolD" value="3.175" step="0.001">
                     </div>
-                    <div class="kv-row">
+                    <div class="kv-row" data-advanced>
                         <label class="kv-label" for="rampEnable">斜坡進刀 / Ramp</label>
                         <label class="kv-check">
                             <input type="checkbox" id="rampEnable">
                             啟用
                         </label>
                     </div>
-                    <div class="kv-row">
+                    <div class="kv-row" data-advanced>
                         <label class="kv-label" for="rampAngleDeg">斜坡角度 (deg)</label>
                         <input class="kv-field" type="number" id="rampAngleDeg" value="5" step="0.5" min="0.5" max="45">
                     </div>
-                    <div class="kv-row">
+                    <div class="kv-row" data-advanced>
                         <label class="kv-label" for="peckStep">啄鑽單次深度 (mm)</label>
                         <input class="kv-field" type="number" id="peckStep" value="0" step="0.1" min="0" title="0 代表不啄鑽">
                     </div>
-                    <div class="kv-row">
+                    <div class="kv-row" data-advanced>
                         <label class="kv-label" for="coolantEnable">冷卻 / 氣吹 M8</label>
                         <label class="kv-check">
                             <input type="checkbox" id="coolantEnable">
@@ -285,7 +297,7 @@
                             <option value="mach3">Mach3</option>
                         </select>
                     </div>
-                    <div class="kv-row">
+                    <div class="kv-row" data-advanced>
                         <label class="kv-label" for="originMode">工件原點 (Work Origin)</label>
                         <select class="kv-field" id="originMode">
                             <option value="top-center">頂面中心</option>
@@ -298,7 +310,7 @@
                 </div>
 
                 <!-- Tab / Bridge Settings -->
-                <div class="settings-section pane settings-subpanel collapsible-panel">
+                <div class="settings-section pane settings-subpanel collapsible-panel" data-advanced>
                     <div class="section-header panel-header panel-header-inline">
                         <h2 class="subpanel-title">固定支撐橋 (Tabs / Bridges)</h2>
                         <div class="panel-header-actions">

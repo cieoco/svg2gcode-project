@@ -32,6 +32,7 @@ const speedSelect = document.getElementById('speedSelect');
 
 const rotateAngle = document.getElementById('rotateAngle');
 const THEME_STORAGE_KEY = 'svg2gcode_theme';
+const UI_MODE_STORAGE_KEY = 'svg2gcode_ui_mode';
 const SETTINGS_STORAGE_KEY = 'svg2gcode_settings';
 const DEFAULT_MATERIAL = 'wood';
 const DEFAULT_TOOL_D = 3.175;
@@ -316,6 +317,46 @@ function materialCommentName(materialType) {
     if (materialType === 'aluminum') return 'ALUMINUM';
     if (materialType === 'plastic') return 'PLASTIC';
     return 'WOOD';
+}
+
+function setPanelExpanded(panelId, expanded) {
+    const button = document.querySelector(`[data-panel-toggle="${panelId}"]`);
+    const panel = document.getElementById(panelId);
+    if (!button || !panel) return;
+    button.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    button.textContent = expanded ? '−' : '+';
+    panel.hidden = !expanded;
+}
+
+function applyUiMode(mode, options = {}) {
+    const m = mode === 'engineer' ? 'engineer' : 'simple';
+    document.body.classList.toggle('mode-simple', m === 'simple');
+    document.getElementById('modeSimpleBtn')?.classList.toggle('active', m === 'simple');
+    document.getElementById('modeEngineerBtn')?.classList.toggle('active', m === 'engineer');
+    if (m === 'simple') {
+        // 傻瓜模式只剩一個參數面板，直接展開避免多按一下
+        setPanelExpanded('camSettingsBody', true);
+    }
+    try {
+        localStorage.setItem(UI_MODE_STORAGE_KEY, m);
+    } catch (e) {
+        console.warn('Could not save UI mode to localStorage', e);
+    }
+    if (options.announce) {
+        log(m === 'simple'
+            ? '已切換到傻瓜模式：只需選材料、厚度、刀徑，其餘參數依材料預設自動套用。'
+            : '已切換到工程模式：顯示全部 CAM 參數。');
+    }
+}
+
+function initUiMode() {
+    let saved = 'simple';
+    try {
+        saved = localStorage.getItem(UI_MODE_STORAGE_KEY) || 'simple';
+    } catch (e) {
+        console.warn('Could not load UI mode from localStorage', e);
+    }
+    applyUiMode(saved);
 }
 
 function initTheme() {
@@ -1033,6 +1074,53 @@ function buildArrayParts(parts, mfg) {
 }
 
 // Generate G-Code
+function computePartBounds(part) {
+    let minX = Infinity, maxX = -Infinity;
+    let minY = Infinity, maxY = -Infinity;
+    for (const pt of part.points || []) {
+        if (pt.x < minX) minX = pt.x;
+        if (pt.x > maxX) maxX = pt.x;
+        if (pt.y < minY) minY = pt.y;
+        if (pt.y > maxY) maxY = pt.y;
+    }
+    if (minX === Infinity) return null;
+    return { width: maxX - minX, height: maxY - minY };
+}
+
+// 傻瓜級防呆：生成前檢查常見的參數/幾何衝突，回傳警告文字陣列（不阻擋生成）
+function collectSafetyWarnings(parts, mfg) {
+    const warnings = [];
+
+    if (mfg.stepdown > mfg.thickness) {
+        warnings.push(`每層下刀量 ${mfg.stepdown.toFixed(2)} mm 大於材料厚度 ${mfg.thickness.toFixed(2)} mm，會一刀切到底，容易斷刀。建議改小每層下刀量。`);
+    }
+
+    if (mfg.tabThickness > 0 && mfg.tabThickness >= mfg.thickness) {
+        warnings.push(`支撐橋厚度 ${mfg.tabThickness.toFixed(2)} mm 不小於材料厚度 ${mfg.thickness.toFixed(2)} mm，零件將完全不會被切穿。`);
+    }
+
+    // 陣列複製的零件 id 會加上 _ax/_ay 後綴，去掉後綴對回原始路徑編號並去重
+    const warnedBaseIds = new Set();
+    parts.forEach((part) => {
+        if (part.toolpathMode !== 'inside') return;
+        const baseId = String(part.id || '').split('_ax')[0];
+        if (warnedBaseIds.has(baseId)) return;
+        const bounds = computePartBounds(part);
+        if (!bounds) return;
+        const minDim = Math.min(bounds.width, bounds.height);
+        if (minDim <= mfg.toolD) {
+            warnedBaseIds.add(baseId);
+            const baseIndex = currentParts ? currentParts.findIndex((p) => p.id === baseId) : -1;
+            const label = baseIndex >= 0 ? `路徑 #${baseIndex + 1}` : '有一個圖形';
+            warnings.push(`${label}（約 ${bounds.width.toFixed(1)}×${bounds.height.toFixed(1)} mm）設定為「銑線內」，但刀具直徑 ${mfg.toolD.toFixed(3)} mm 銑不進這個輪廓，此路徑會被略過或產生錯誤結果。請換小刀或改用「銑線上」。`);
+        }
+    });
+
+    return warnings;
+}
+
+const ACTIVE_TOOLPATH_MODES = ['outside', 'inside', 'drill', 'on-path', 'surface-clean'];
+
 generateBtn.addEventListener('click', () => {
     if (!currentParts || currentParts.length === 0) return;
 
@@ -1061,6 +1149,14 @@ generateBtn.addEventListener('click', () => {
         const extents = computePartsExtents(partsToProcess);
         const margin = mfg.materialMargin || 4;
         const effectiveMfg = { ...mfg };
+
+        const activeParts = partsToProcess.filter((part) => ACTIVE_TOOLPATH_MODES.includes(part.toolpathMode));
+        if (activeParts.length === 0) {
+            log('尚未指定任何刀路，無法生成 G-Code。\n請先在左側 2D 視圖：\n1. 點選上方的刀路模式（例如「銑線外」）\n2. 再點擊圖形中的線條，把刀路套用到該線段');
+            return;
+        }
+
+        const safetyWarnings = collectSafetyWarnings(partsToProcess, effectiveMfg);
 
         const surfaceCleanCount = partsToProcess.filter((part) => part.toolpathMode === 'surface-clean').length;
         const files = buildAllGcodes(partsToProcess, effectiveMfg);
@@ -1145,7 +1241,10 @@ generateBtn.addEventListener('click', () => {
             };
             const originLabel = originLabels[effectiveMfg.originMode] || effectiveMfg.originMode;
 
-            log(`成功！G-Code 檔案已下載。\n工件原點：${originLabel}\n\n${info}`);
+            const warningBlock = safetyWarnings.length
+                ? `\n\n⚠ 注意：\n${safetyWarnings.map((w) => `- ${w}`).join('\n')}`
+                : '';
+            log(`成功！G-Code 檔案已下載。${warningBlock}\n\n工件原點：${originLabel}\n\n${info}`);
         }
     } catch (err) {
         log(`生成 G-code 時發生錯誤: ${err.message}`);
@@ -1315,6 +1414,15 @@ function initCollapsiblePanels() {
 document.addEventListener('DOMContentLoaded', () => {
     initTheme();
     initCollapsiblePanels();
+    initUiMode();
+
+    document.getElementById('modeSimpleBtn')?.addEventListener('click', () => {
+        applyUiMode('simple', { announce: true });
+    });
+    document.getElementById('modeEngineerBtn')?.addEventListener('click', () => {
+        applyUiMode('engineer', { announce: true });
+    });
+
     if (themeSelect) {
         themeSelect.addEventListener('change', () => {
             applyTheme(themeSelect.value);
