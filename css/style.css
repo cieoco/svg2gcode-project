@@ -407,49 +407,55 @@ body {
     bottom: 1.5rem;
     left: 50%;
     transform: translateX(-50%);
+    max-width: calc(100% - 1.5rem);
+    box-sizing: border-box;
     background: rgba(22, 24, 29, 0.85);
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
     border: 1px solid var(--border);
     border-radius: 30px;
-    padding: 0.5rem 1.5rem;
+    padding: 0.5rem 1rem;
     display: flex;
     align-items: center;
-    gap: 1rem;
+    gap: 0.5rem;
     box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 0 15px rgba(0, 229, 255, 0.1);
     z-index: 10;
 }
 
 .ctrl-btn {
-    background: transparent;
-    border: none;
-    color: var(--text-main);
+    background: rgba(255, 255, 255, 0.12);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    color: #ffffff;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 0.5rem;
+    padding: 0.35rem;
     border-radius: 50%;
     transition: all 0.2s;
+    flex: 0 0 auto;
 }
 
 .ctrl-btn:hover {
-    background: rgba(255, 255, 255, 0.1);
-    color: var(--primary);
+    background: var(--primary);
+    border-color: var(--primary);
+    color: #0b0e14;
 }
 
 .progress-container {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
-    min-width: 200px;
+    gap: 0.5rem;
+    flex: 1 1 auto;
+    min-width: 90px;
 }
 
 .progress-container span {
     font-size: 0.75rem;
     font-variant-numeric: tabular-nums;
     color: var(--text-muted);
-    min-width: 40px;
+    min-width: 34px;
+    flex: 0 0 auto;
 }
 
 #progressSlider {
