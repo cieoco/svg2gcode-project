@@ -16,6 +16,7 @@ import {
     signedPolygonArea,
     reverseClosedGeom
 } from './operations.js';
+import { gcomment } from '../utils.js';
 
 function polygonArea(pts) {
     let a = 0;
@@ -111,7 +112,7 @@ export function buildPartGcode(part, mfg) {
     // Mach3 parsing is aggressive: uppercase only, no underscores, no equals signs
     const safeId = part.id ? part.id.toUpperCase().replace(/_/g, '') : 'UNKNOWN';
     const safeStyle = part.barStyle ? part.barStyle.toUpperCase() : 'RECT';
-    lines.push(`(PART ${safeId} ${labelL} STYLE ${safeStyle})`);
+    lines.push(gcomment(`PART ${safeId} ${labelL} STYLE ${safeStyle}`));
 
     // Support 'none' mode (do not generate geometry G-code for this part)
     if (mode === 'none') {

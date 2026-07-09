@@ -1470,15 +1470,11 @@ function buildProgram() {
 
     txt = applyGcodeOffset(txt, offsetX, offsetY, offsetZ);
 
-    // Mach3 has ancient bugs where letters like 'O' (program number) inside comments
-    // cause "Bad character used" errors. E.g. (DRILL HOLES) -> O followed by L.
-    // Safest fallback is to strip all comments for Mach3.
-    if (effectiveMfg.postProcessor === 'mach3') {
-        txt = txt.split(/\r?\n/)
-            .map(line => line.replace(/\([^)]*\)/g, '').trim()) // Remove any (...) and trim spaces
-            .filter(line => line !== '') // Remove resulting empty lines
-            .join('\r\n');
-    }
+    // Mach3: keep the parenthesis "(...)" comments as-is. They are already
+    // sanitized upstream by gcomment() (uppercase ASCII, no nested parens, no
+    // '%'), which is what makes them safe for Mach3's stricter parser.
+    // (Earlier builds converted these to ';' comments or stripped them; we now
+    //  keep parentheses since they are the more universal Mach3 convention.)
 
     // 3D viewer gets the offset-applied G-code, so shift the stock box too
     const viewerMfg = effectiveMfg.stockBounds

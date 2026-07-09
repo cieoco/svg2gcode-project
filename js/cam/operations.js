@@ -395,7 +395,7 @@ export function profileRectOps({
     tabZ,
 }) {
     const lines = [];
-    lines.push("(Profile rectangle)");
+    lines.push("(PROFILE RECTANGLE)");
     const x0 = rect.x,
         y0 = rect.y,
         x1 = rect.x + rect.w,
@@ -445,7 +445,7 @@ export function profileRoundedRectOps({
     tabZ,
 }) {
     const lines = [];
-    lines.push("(Profile rounded rectangle)");
+    lines.push("(PROFILE ROUNDED RECTANGLE)");
     const { x: x0, y: y0, w, h } = rect;
     const r = h / 2;
     const x1 = x0 + w;
@@ -491,7 +491,7 @@ export function profileCircleOps({
     clockwise = false,
 }) {
     const lines = [];
-    lines.push("(Profile circle)");
+    lines.push("(PROFILE CIRCLE)");
     const r = diameter / 2;
 
     const zLevels = buildZLevels(topZ, cutDepth, stepdown);
@@ -629,7 +629,7 @@ export function profilePathOps({
     if ((!points || points.length < 2) && (!svgMoves || svgMoves.length === 0)) return [];
 
     const lines = [];
-    lines.push("(Profile arbitrary path)");
+    lines.push("(PROFILE ARBITRARY PATH)");
 
     const zLevels = buildZLevels(topZ, cutDepth, stepdown);
 
@@ -947,7 +947,7 @@ export function profileTangentHullOps({
     const zLevels = buildZLevels(topZ, cutDepth, stepdown);
 
     const lines = [];
-    lines.push("(Profile tangent hull)");
+    lines.push("(PROFILE TANGENT HULL)");
 
     for (const z of zLevels) {
         const tabActive = tabIntervals.length && Number.isFinite(tabZ) && z < tabZ - 1e-6;
