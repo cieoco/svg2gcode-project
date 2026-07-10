@@ -7,6 +7,7 @@ import { parseDXF } from './dxf-parser.js';
 import { buildAllGcodes, generateMachiningInfo } from './cam/generator.js';
 import { gcodeHeader, gcodeFooter, buildFacePattern } from './cam/operations.js';
 import { init3DViewer, update3DToolpath, linkAnimationUI, reset3DView } from './viewer3d.js';
+import { buildHanziParts } from './text/hanzi-text.js';
 
 // Elements
 const dropZone = document.getElementById('dropZone');
@@ -259,6 +260,50 @@ fileInput.addEventListener('change', (e) => {
 dropZone.addEventListener('click', () => {
     fileInput.click();
 });
+
+const hanziGenerateBtn = document.getElementById('hanziGenerateBtn');
+if (hanziGenerateBtn) {
+    hanziGenerateBtn.addEventListener('click', async () => {
+        const text = (document.getElementById('hanziText')?.value || '').trim();
+        if (!text) { log('請先輸入要刻的中文字。'); return; }
+
+        const sizeMm = parseFloat(document.getElementById('hanziSize')?.value) || 20;
+        const charSpacingMm = parseFloat(document.getElementById('hanziSpacing')?.value) || 0;
+        const engraveDepthMm = parseFloat(document.getElementById('hanziDepth')?.value) || 1;
+
+        hanziGenerateBtn.disabled = true;
+        log('正在取得字形中線資料...');
+        try {
+            const { parts, missing } = await buildHanziParts(text, { sizeMm, charSpacingMm, engraveDepthMm });
+            if (parts.length === 0) {
+                log('沒有可用的字形資料，請換其他字試試。');
+                return;
+            }
+
+            previewFlipY = true;
+            currentParts = parts;
+
+            let msg = `已產生 ${parts.length} 條單線筆畫（on-path，刻深 ${engraveDepthMm} mm）。`;
+            if (missing.length > 0) msg += ` 無資料略過：${[...new Set(missing)].join('')}`;
+            log(msg);
+            updateGenerateButtonState();
+
+            const designExtents = computePartsExtents(currentParts);
+            if (designExtents.minX !== Infinity) {
+                setFieldValue('stockW', Math.ceil(designExtents.maxX - designExtents.minX));
+                setFieldValue('stockH', Math.ceil(designExtents.maxY - designExtents.minY));
+                persistSettings();
+            }
+
+            renderPreviewSvg();
+            renderToolpathList();
+        } catch (err) {
+            log(`產生單線文字時發生錯誤：${err.message}`);
+        } finally {
+            hanziGenerateBtn.disabled = false;
+        }
+    });
+}
 
 function log(msg) {
     if (logText) {
