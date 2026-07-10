@@ -85,7 +85,16 @@
                     <label style="display:flex; flex-direction:column; gap:2px; font-size:0.82rem;">刻深 mm
                         <input type="number" id="hanziDepth" value="1" step="0.1" min="0.1" style="width:70px;">
                     </label>
-                    <button type="button" class="btn" id="hanziGenerateBtn">產生單線文字</button>
+                    <label style="display:flex; flex-direction:column; gap:2px; font-size:0.82rem;">位置X mm
+                        <input type="number" id="hanziPosX" value="0" step="1" style="width:70px;">
+                    </label>
+                    <label style="display:flex; flex-direction:column; gap:2px; font-size:0.82rem;">位置Y mm
+                        <input type="number" id="hanziPosY" value="0" step="1" style="width:70px;">
+                    </label>
+                    <label style="display:flex; flex-direction:column; gap:2px; font-size:0.82rem;">旋轉 °
+                        <input type="number" id="hanziRotate" value="0" step="5" style="width:70px;">
+                    </label>
+                    <button type="button" class="btn" id="hanziGenerateBtn">產生 / 更新文字</button>
                 </div>
 
                 <div class="svg-preview-container">

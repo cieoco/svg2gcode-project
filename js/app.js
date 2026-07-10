@@ -261,6 +261,60 @@ dropZone.addEventListener('click', () => {
     fileInput.click();
 });
 
+// Base (un-placed) text strokes, kept so X/Y/rotate/depth can be re-applied
+// live without re-fetching glyph data from the CDN.
+let hanziBaseParts = null;
+
+// Workpiece = every part that is NOT part of the text group.
+function getWorkpieceParts() {
+    return (currentParts || []).filter((p) => !p.textGroup);
+}
+
+// Re-place the text group onto the current workpiece using the panel's
+// position (X/Y), rotation, and depth. Rotation is about the text's own
+// centre so it spins in place; then the whole group shifts by (posX, posY).
+function applyHanziPlacement() {
+    if (!hanziBaseParts || hanziBaseParts.length === 0) return;
+
+    const posX = parseFloat(document.getElementById('hanziPosX')?.value) || 0;
+    const posY = parseFloat(document.getElementById('hanziPosY')?.value) || 0;
+    const rot = (parseFloat(document.getElementById('hanziRotate')?.value) || 0) * Math.PI / 180;
+    const depth = parseFloat(document.getElementById('hanziDepth')?.value) || 1;
+
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const bp of hanziBaseParts) {
+        for (const pt of bp.points) {
+            minX = Math.min(minX, pt.x); maxX = Math.max(maxX, pt.x);
+            minY = Math.min(minY, pt.y); maxY = Math.max(maxY, pt.y);
+        }
+    }
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    const cos = Math.cos(rot), sin = Math.sin(rot);
+
+    const textParts = hanziBaseParts.map((bp) => ({
+        ...bp,
+        textGroup: true,
+        toolpathMode: 'on-path',
+        isPartial: true,
+        partialDepth: depth,
+        listOrdered: true,
+        points: bp.points.map((pt) => {
+            const dx = pt.x - cx, dy = pt.y - cy;
+            return {
+                x: cx + (dx * cos - dy * sin) + posX,
+                y: cy + (dx * sin + dy * cos) + posY
+            };
+        })
+    }));
+
+    previewFlipY = true;
+    currentParts = [...getWorkpieceParts(), ...textParts];
+    updateGenerateButtonState();
+    renderPreviewSvg();
+    renderToolpathList();
+}
+
 const hanziGenerateBtn = document.getElementById('hanziGenerateBtn');
 if (hanziGenerateBtn) {
     hanziGenerateBtn.addEventListener('click', async () => {
@@ -274,34 +328,42 @@ if (hanziGenerateBtn) {
         hanziGenerateBtn.disabled = true;
         log('正在取得字形中線資料...');
         try {
+            const hadWorkpiece = getWorkpieceParts().length > 0;
             const { parts, missing } = await buildHanziParts(text, { sizeMm, charSpacingMm, engraveDepthMm });
             if (parts.length === 0) {
                 log('沒有可用的字形資料，請換其他字試試。');
                 return;
             }
 
-            previewFlipY = true;
-            currentParts = parts;
+            hanziBaseParts = parts;
+            applyHanziPlacement();
 
             let msg = `已產生 ${parts.length} 條單線筆畫（on-path，刻深 ${engraveDepthMm} mm）。`;
+            if (hadWorkpiece) msg += ' 已疊加到工件上，可用位置 X/Y 與旋轉調整。';
             if (missing.length > 0) msg += ` 無資料略過：${[...new Set(missing)].join('')}`;
             log(msg);
-            updateGenerateButtonState();
 
-            const designExtents = computePartsExtents(currentParts);
-            if (designExtents.minX !== Infinity) {
-                setFieldValue('stockW', Math.ceil(designExtents.maxX - designExtents.minX));
-                setFieldValue('stockH', Math.ceil(designExtents.maxY - designExtents.minY));
-                persistSettings();
+            // Only auto-size the stock when engraving text alone (no workpiece);
+            // with a workpiece we keep its stock untouched.
+            if (!hadWorkpiece) {
+                const ext = computePartsExtents(currentParts);
+                if (ext.minX !== Infinity) {
+                    setFieldValue('stockW', Math.ceil(ext.maxX - ext.minX));
+                    setFieldValue('stockH', Math.ceil(ext.maxY - ext.minY));
+                    persistSettings();
+                }
             }
-
-            renderPreviewSvg();
-            renderToolpathList();
         } catch (err) {
             log(`產生單線文字時發生錯誤：${err.message}`);
         } finally {
             hanziGenerateBtn.disabled = false;
         }
+    });
+
+    // Live placement: moving/rotating/re-depthing doesn't need a re-fetch.
+    ['hanziPosX', 'hanziPosY', 'hanziRotate', 'hanziDepth'].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('input', () => applyHanziPlacement());
     });
 }
 
