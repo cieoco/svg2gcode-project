@@ -9,7 +9,9 @@
  *
  * Coordinate space: hanzi-writer glyphs live on a 1024×1024 em grid and are
  * Y-UP, which matches parseSVG's machine coordinates, so no Y flip is needed.
- * Data is fetched on demand from a CDN and cached in memory.
+ * CJK glyphs are fetched on demand from a CDN and persisted to localStorage,
+ * so previously used characters load instantly and work offline afterwards.
+ * Printable ASCII is drawn from an embedded Hershey font (fully offline).
  */
 
 import { HERSHEY, HERSHEY_CAP_HEIGHT } from './hershey-simplex.js';
@@ -81,21 +83,39 @@ function smoothStroke(pts, stepMm) {
     return out;
 }
 
+// Persistent cache: successfully fetched glyphs are stored (medians only) in
+// localStorage, so characters you have used before load instantly and work
+// offline on later visits. No repo bloat; the cache is your actual usage.
+const LS_PREFIX = 'hzmed:';
+function lsGet(char) {
+    try {
+        const v = localStorage.getItem(LS_PREFIX + char);
+        return v == null ? undefined : { medians: JSON.parse(v) };
+    } catch (err) { return undefined; }
+}
+function lsSet(char, data) {
+    try { localStorage.setItem(LS_PREFIX + char, JSON.stringify(data.medians)); }
+    catch (err) { /* unavailable or over quota — in-memory cache still works */ }
+}
+
 /**
- * Fetch one character's stroke data. Returns null for whitespace or characters
- * that are not in the dataset. Results (including misses) are cached.
+ * Fetch one character's stroke data. Returns null for characters that are not
+ * in the dataset. Successful results persist to localStorage; a network
+ * failure throws and is NOT cached so it can be retried.
  * @param {string} char single character
  * @returns {Promise<{medians:number[][][]}|null>}
  */
 async function fetchCharData(char) {
     if (cache.has(char)) return cache.get(char);
-    // A 404 means "not in the dataset" and is cached as a permanent miss.
-    // A network failure throws and is NOT cached, so it can be retried later.
+    const stored = lsGet(char);
+    if (stored) { cache.set(char, stored); return stored; }
+
     const res = await fetch(DATA_BASE + encodeURIComponent(char) + '.json');
-    if (res.status === 404) { cache.set(char, null); return null; }
+    if (res.status === 404) { cache.set(char, null); return null; }  // not in dataset
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     cache.set(char, data);
+    lsSet(char, data);
     return data;
 }
 
