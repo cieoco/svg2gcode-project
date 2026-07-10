@@ -12,9 +12,23 @@
  * Data is fetched on demand from a CDN and cached in memory.
  */
 
+import { HERSHEY, HERSHEY_CAP_HEIGHT } from './hershey-simplex.js';
+
 const DATA_BASE = 'https://cdn.jsdelivr.net/npm/hanzi-writer-data@2/';
 const EM = 1024;              // hanzi-writer em-square size
 const cache = new Map();      // char -> {strokes, medians} | null (known-missing)
+const LATIN_CAP_FRACTION = 0.72;   // Latin cap height relative to the CJK em
+
+// A CJK ideograph we look up in hanzi-writer-data; anything printable ASCII we
+// draw from the embedded Hershey font (offline). Everything else is "missing".
+function isCjk(ch) {
+    const c = ch.codePointAt(0);
+    return (c >= 0x3400 && c <= 0x9FFF) || (c >= 0xF900 && c <= 0xFAFF);
+}
+function isLatin(ch) {
+    const c = ch.codePointAt(0);
+    return c >= 0x21 && c <= 0x7E && HERSHEY[c];  // printable ASCII with a glyph
+}
 
 /**
  * One point on a centripetal Catmull-Rom spline (Barry-Goldman form).
@@ -75,16 +89,35 @@ function smoothStroke(pts, stepMm) {
  */
 async function fetchCharData(char) {
     if (cache.has(char)) return cache.get(char);
-    try {
-        const res = await fetch(DATA_BASE + encodeURIComponent(char) + '.json');
-        if (!res.ok) { cache.set(char, null); return null; }
-        const data = await res.json();
-        cache.set(char, data);
-        return data;
-    } catch (err) {
-        cache.set(char, null);
-        return null;
+    // A 404 means "not in the dataset" and is cached as a permanent miss.
+    // A network failure throws and is NOT cached, so it can be retried later.
+    const res = await fetch(DATA_BASE + encodeURIComponent(char) + '.json');
+    if (res.status === 404) { cache.set(char, null); return null; }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    cache.set(char, data);
+    return data;
+}
+
+/**
+ * Warm the cache for a set of characters, fetching unique, not-yet-cached ones
+ * with a small concurrency pool. Network errors are recorded but do not reject.
+ * @returns {Promise<{networkError:boolean}>}
+ */
+async function prefetch(chars, concurrency = 6) {
+    const todo = [...new Set(chars)].filter((c) => !cache.has(c));
+    let networkError = false;
+    let i = 0;
+    async function worker() {
+        while (i < todo.length) {
+            const c = todo[i++];
+            try { await fetchCharData(c); }
+            catch (err) { networkError = true; } // leave uncached for retry
+        }
     }
+    const n = Math.max(1, Math.min(concurrency, todo.length));
+    await Promise.all(Array.from({ length: n }, worker));
+    return { networkError };
 }
 
 /**
@@ -95,19 +128,40 @@ async function fetchCharData(char) {
  * @param {number} opts.charSpacingMm  extra gap between glyphs (mm)
  * @param {number} opts.lineSpacingMm  extra gap between rows (mm)
  * @param {number} opts.engraveDepthMm engraving depth (partial cut, mm)
- * @returns {Promise<{parts:Array, missing:string[]}>}
+ * @param {number} opts.maxChars max glyphs to render (guards against pasting a
+ *                               huge block and firing hundreds of requests)
+ * @returns {Promise<{parts:Array, missing:string[], networkError:boolean, truncated:boolean}>}
  */
 export async function buildHanziParts(text, opts = {}) {
     const sizeMm = Number.isFinite(opts.sizeMm) && opts.sizeMm > 0 ? opts.sizeMm : 20;
     const charSpacingMm = Number.isFinite(opts.charSpacingMm) ? opts.charSpacingMm : 2;
     const lineSpacingMm = Number.isFinite(opts.lineSpacingMm) ? opts.lineSpacingMm : sizeMm * 0.3;
     const engraveDepthMm = Number.isFinite(opts.engraveDepthMm) && opts.engraveDepthMm > 0 ? opts.engraveDepthMm : 1;
+    const maxChars = Number.isFinite(opts.maxChars) && opts.maxChars > 0 ? opts.maxChars : 200;
 
-    const scale = sizeMm / EM;
-    const advance = sizeMm + charSpacingMm;
+    const cjkScale = sizeMm / EM;
+    const cjkAdvance = sizeMm + charSpacingMm;
+    const latinScale = (LATIN_CAP_FRACTION * sizeMm) / HERSHEY_CAP_HEIGHT;
     const lineStep = sizeMm + lineSpacingMm;
     // Fine but not excessive: scales with glyph size, clamped for tiny/huge text.
     const smoothStepMm = Math.min(0.6, Math.max(0.2, sizeMm / 50));
+
+    const isSpace = (ch) => ch === ' ' || ch === '　' || ch === '\t';
+
+    // Cap the number of visible (non-whitespace) glyphs to bound the workload.
+    const allChars = Array.from(text);
+    let visibleCount = 0;
+    const chars = [];
+    let truncated = false;
+    for (const ch of allChars) {
+        const visible = ch !== '\n' && !isSpace(ch);
+        if (visible && visibleCount >= maxChars) { truncated = true; break; }
+        if (visible) visibleCount += 1;
+        chars.push(ch);
+    }
+
+    // Only CJK glyphs need a network lookup; Latin is embedded (offline).
+    const { networkError } = await prefetch(chars.filter(isCjk));
 
     const parts = [];
     const missing = [];
@@ -115,39 +169,48 @@ export async function buildHanziParts(text, opts = {}) {
     let penY = 0;
     let idx = 0;
 
-    for (const ch of Array.from(text)) {
-        if (ch === '\n') { penX = 0; penY -= lineStep; continue; }
-        if (ch === ' ' || ch === '　' || ch === '\t') { penX += advance; continue; }
-
-        const data = await fetchCharData(ch);
-        if (!data || !Array.isArray(data.medians)) {
-            missing.push(ch);
-            penX += advance;
-            continue;
-        }
-
-        data.medians.forEach((median, si) => {
-            if (!Array.isArray(median) || median.length < 2) return;
-            const raw = median.map(([px, py]) => ({
-                x: penX + px * scale,
-                y: penY + py * scale
-            }));
-            const points = smoothStroke(raw, smoothStepMm);
-            parts.push({
-                id: `hz_${Date.now()}_${idx}_${si}`,
-                barStyle: 'path',
-                toolpathMode: 'on-path',
-                points,
-                isPartial: true,
-                partialDepth: engraveDepthMm,
-                listOrdered: true,
-                hanziChar: ch
-            });
+    const pushStroke = (pointsMm, si, ch) => {
+        if (pointsMm.length < 2) return;
+        parts.push({
+            id: `hz_${Date.now()}_${idx}_${si}`,
+            barStyle: 'path',
+            toolpathMode: 'on-path',
+            points: pointsMm,
+            isPartial: true,
+            partialDepth: engraveDepthMm,
+            listOrdered: true,
+            hanziChar: ch
         });
+    };
 
-        penX += advance;
+    for (const ch of chars) {
+        if (ch === '\n') { penX = 0; penY -= lineStep; continue; }
+        if (ch === ' ' || ch === '\t') { penX += latinScale * HERSHEY[32].advance + charSpacingMm; continue; }
+        if (ch === '　') { penX += cjkAdvance; continue; }
+
+        if (isCjk(ch)) {
+            const data = cache.get(ch);
+            if (!data || !Array.isArray(data.medians)) { missing.push(ch); penX += cjkAdvance; idx += 1; continue; }
+            data.medians.forEach((median, si) => {
+                if (!Array.isArray(median) || median.length < 2) return;
+                const raw = median.map(([px, py]) => ({ x: penX + px * cjkScale, y: penY + py * cjkScale }));
+                pushStroke(smoothStroke(raw, smoothStepMm), si, ch);   // smooth: sparse medians
+            });
+            penX += cjkAdvance;
+        } else if (isLatin(ch)) {
+            const g = HERSHEY[ch.codePointAt(0)];
+            // Hershey strokes are already clean line segments — do NOT smooth,
+            // so letter corners (A's apex, etc.) stay crisp.
+            g.strokes.forEach((stroke, si) => {
+                pushStroke(stroke.map(([x, y]) => ({ x: penX + x * latinScale, y: penY + y * latinScale })), si, ch);
+            });
+            penX += latinScale * g.advance + charSpacingMm;
+        } else {
+            missing.push(ch);
+            penX += cjkAdvance;
+        }
         idx += 1;
     }
 
-    return { parts, missing };
+    return { parts, missing, networkError, truncated };
 }

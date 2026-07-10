@@ -329,9 +329,13 @@ if (hanziGenerateBtn) {
         log('正在取得字形中線資料...');
         try {
             const hadWorkpiece = getWorkpieceParts().length > 0;
-            const { parts, missing } = await buildHanziParts(text, { sizeMm, charSpacingMm, engraveDepthMm });
+            const { parts, missing, networkError, truncated } = await buildHanziParts(text, { sizeMm, charSpacingMm, engraveDepthMm });
             if (parts.length === 0) {
-                log('沒有可用的字形資料，請換其他字試試。');
+                if (networkError) {
+                    log('無法連上字形資料庫（可能是網路問題）。請確認連線後再試。');
+                } else {
+                    log('沒有可用的字形資料，請換其他字試試（支援中日韓漢字與英數字）。');
+                }
                 return;
             }
 
@@ -340,6 +344,8 @@ if (hanziGenerateBtn) {
 
             let msg = `已產生 ${parts.length} 條單線筆畫（on-path，刻深 ${engraveDepthMm} mm）。`;
             if (hadWorkpiece) msg += ' 已疊加到工件上，可用位置 X/Y 與旋轉調整。';
+            if (truncated) msg += ' 字數過多，只取前 200 字。';
+            if (networkError) msg += ' 部分字下載失敗（網路），已略過。';
             if (missing.length > 0) msg += ` 無資料略過：${[...new Set(missing)].join('')}`;
             log(msg);
 
@@ -1359,6 +1365,33 @@ function computePartBounds(part) {
 // 傻瓜級防呆：生成前檢查常見的參數/幾何衝突，回傳警告文字陣列（不阻擋生成）
 function collectSafetyWarnings(parts, mfg) {
     const warnings = [];
+
+    const hasCutting = Array.isArray(parts)
+        && parts.some((p) => ACTIVE_TOOLPATH_MODES.includes(p.toolpathMode));
+
+    // 進給速度為 0/未設：G1 以 F0 進刀,機器可能報錯或以快速進給硬撞
+    if (hasCutting && (!Number.isFinite(mfg.feedXY) || mfg.feedXY <= 0)) {
+        warnings.push(`XY 進給速度為 0 或未設定,切削路徑會以 F0 執行,可能斷刀或機器報錯。請設定合理的 XY 進給。`);
+    }
+    if (hasCutting && (!Number.isFinite(mfg.feedZ) || mfg.feedZ <= 0)) {
+        warnings.push(`Z 進給速度為 0 或未設定,下刀會以 F0 執行,容易斷刀。請設定合理的 Z 進給。`);
+    }
+
+    // 刀徑無效
+    if (!Number.isFinite(mfg.toolD) || mfg.toolD <= 0) {
+        warnings.push(`刀具直徑為 0 或未設定,刀徑補償與內雕判斷都會失準。請填入實際刀徑。`);
+    }
+
+    // 主軸未轉卻要切削(排除純鑽點等仍需確認的情況,一律提醒)
+    if (hasCutting && Number.isFinite(mfg.spindle) && mfg.spindle <= 0) {
+        warnings.push(`主軸轉速為 0 但有切削路徑。若非手動控制主軸,請設定轉速,否則等於用不轉的刀硬壓材料。`);
+    }
+
+    // 安全高度低於胚料頂面:快速移動 (G0) 會貼著或穿過胚料表面
+    const topZ = Number.isFinite(mfg.stockTopZ) ? mfg.stockTopZ : 0;
+    if (Number.isFinite(mfg.safeZ) && mfg.safeZ <= topZ) {
+        warnings.push(`安全高度 Z${mfg.safeZ.toFixed(2)} 不高於胚料頂面 Z${topZ.toFixed(2)},快速移動時刀具會貼著或撞到胚料表面。請把安全高度設在頂面之上。`);
+    }
 
     if (mfg.stepdown > mfg.thickness) {
         warnings.push(`每層下刀量 ${mfg.stepdown.toFixed(2)} mm 大於材料厚度 ${mfg.thickness.toFixed(2)} mm，會一刀切到底，容易斷刀。建議改小每層下刀量。`);
