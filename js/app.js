@@ -373,6 +373,21 @@ if (hanziGenerateBtn) {
     });
 }
 
+// Remove the text group, keeping any loaded workpiece intact.
+const hanziClearBtn = document.getElementById('hanziClearBtn');
+if (hanziClearBtn) {
+    hanziClearBtn.addEventListener('click', () => {
+        const hasText = Boolean(hanziBaseParts) || (currentParts || []).some((p) => p.textGroup);
+        if (!hasText) { log('目前沒有文字可清除。'); return; }
+        hanziBaseParts = null;
+        currentParts = getWorkpieceParts();
+        updateGenerateButtonState();
+        renderPreviewSvg();
+        renderToolpathList();
+        log(currentParts.length > 0 ? '已清除文字，保留工件。' : '已清除文字。');
+    });
+}
+
 function log(msg) {
     if (logText) {
         logText.innerText = msg;
@@ -445,25 +460,13 @@ function materialCommentName(materialType) {
     return 'WOOD';
 }
 
-function setPanelExpanded(panelId, expanded) {
-    const button = document.querySelector(`[data-panel-toggle="${panelId}"]`);
-    const panel = document.getElementById(panelId);
-    if (!button || !panel) return;
-    button.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-    button.textContent = expanded ? '−' : '+';
-    panel.hidden = !expanded;
-}
-
 function applyUiMode(mode, options = {}) {
     const m = mode === 'engineer' ? 'engineer' : 'simple';
     document.body.classList.toggle('mode-simple', m === 'simple');
     document.getElementById('modeSimpleBtn')?.classList.toggle('active', m === 'simple');
     document.getElementById('modeEngineerBtn')?.classList.toggle('active', m === 'engineer');
-    if (m === 'simple') {
-        // 傻瓜模式面板不多，直接展開避免多按一下（胚料厚度在 stock 面板內）
-        setPanelExpanded('camSettingsBody', true);
-        setPanelExpanded('stockPanelBody', true);
-    }
+    // All collapsible panels stay collapsed by default in every mode; the user
+    // expands only what they need.
     try {
         localStorage.setItem(UI_MODE_STORAGE_KEY, m);
     } catch (e) {

@@ -872,3 +872,98 @@ body:not(.mode-simple) .simple-guide {
     fill: none;
     stroke: #ef4444 !important;
 }
+
+/* Single-line text engraving panel */
+.hanzi-panel {
+    margin: 0.75rem 0;
+    padding: 0.875rem 1rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-panel);
+}
+
+.hanzi-panel__head {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.hanzi-panel__head .panel-toggle-btn {
+    margin-left: auto;
+}
+
+.hanzi-panel .panel-content {
+    margin-top: 0.75rem;
+}
+
+.hanzi-panel__head h4 {
+    margin: 0;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text-main);
+}
+
+.hanzi-panel__head .tag {
+    font-size: 0.72rem;
+    font-weight: 500;
+    color: var(--text-muted);
+}
+
+.hanzi-panel textarea {
+    width: 100%;
+    min-height: 2.75rem;
+    resize: vertical;
+    background: var(--bg-dark);
+    border: 1px solid var(--border);
+    color: var(--text-main);
+    border-radius: var(--radius-md);
+    padding: 0.5rem 0.625rem;
+    font-family: inherit;
+    font-size: 0.95rem;
+    transition: border-color 0.2s ease;
+}
+
+.hanzi-fields {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(5.5rem, 1fr));
+    gap: 0.625rem;
+    margin: 0.75rem 0;
+}
+
+.hanzi-field label {
+    display: block;
+    margin-bottom: 0.25rem;
+    font-size: 0.78rem;
+    color: var(--text-muted);
+}
+
+.hanzi-field input {
+    width: 100%;
+    background: var(--bg-dark);
+    border: 1px solid var(--border);
+    color: var(--text-main);
+    padding: 0.5rem 0.6rem;
+    border-radius: var(--radius-md);
+    font-family: inherit;
+    font-size: 0.875rem;
+    transition: border-color 0.2s ease;
+}
+
+.hanzi-panel textarea:focus,
+.hanzi-field input:focus {
+    outline: none;
+    border-color: var(--primary);
+}
+
+.hanzi-actions {
+    display: flex;
+    gap: 0.625rem;
+}
+
+/* Compact, side-by-side action buttons (override full-width .btn) */
+.hanzi-actions .btn {
+    width: auto;
+    flex: 1;
+    padding: 0.6rem 1rem;
+    font-size: 0.9rem;
+}
