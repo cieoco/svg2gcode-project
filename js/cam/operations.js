@@ -10,7 +10,11 @@ function normalizePostProcessor(postProcessor) {
     return val === 'mach3' ? 'mach3' : 'grbl';
 }
 
-export function gcodeHeader({ safeZ, spindle, postProcessor, coolantEnable }) {
+/**
+ * spindleDir: 'cw' (M3, default) | 'ccw' (M4). Defaulting to 'cw' keeps the
+ * previous hard-coded M3 behaviour for callers that don't set it.
+ */
+export function gcodeHeader({ safeZ, spindle, postProcessor, coolantEnable, spindleDir }) {
     const lines = [];
     const post = normalizePostProcessor(postProcessor);
     lines.push(`(SVG2GCODE, ${post === 'mach3' ? 'MACH3' : 'GRBL'})`);
@@ -26,7 +30,7 @@ export function gcodeHeader({ safeZ, spindle, postProcessor, coolantEnable }) {
     }
     lines.push(`G0 Z${fmt(safeZ)}`);
     if (Number.isFinite(spindle) && spindle > 0) {
-        lines.push(`M3 S${fmt(spindle)}`);
+        lines.push(`${spindleDir === 'ccw' ? 'M4' : 'M3'} S${fmt(spindle)}`);
     }
     if (coolantEnable) {
         lines.push("M8  (COOLANT ON)");
@@ -124,13 +128,17 @@ export function drillOps({ holes, safeZ, drillZ, feedZ, topZ = 0, peckStep = 0 }
  *
  * startCorner ('bl'|'br'|'tl'|'tr') = 對刀定位點, the pass starts nearest
  * to where the operator parked the tool.
+ *
+ * spindleCW: true = M3 (clockwise from above), false = M4. Only 'oneway' uses
+ * it — climb depends on which way the teeth travel where they meet the stock.
  */
 export function buildFacePattern({
     x0, y0, x1, y1,
     toolD,
     overlapPct,
     pattern = 'zigzag',
-    startCorner = 'bl'
+    startCorner = 'bl',
+    spindleCW = true
 }) {
     if (!(x1 > x0) || !(y1 > y0) || !(toolD > 0)) return [];
 
@@ -186,9 +194,10 @@ export function buildFacePattern({
         // tangential velocity on the +Y side of the cutter points along +X, so
         // stepping +Y must cut +X (and stepping −Y must cut −X) for the tooth
         // to move with the feed where it meets uncut stock — that is climb.
+        // M4 reverses the tooth travel, so the cut direction flips with it.
         // Cut direction therefore follows fromBottom, not fromLeft; startCorner
         // only chooses which edge we start stepping from.
-        const cutPositiveX = fromBottom;
+        const cutPositiveX = spindleCW ? fromBottom : !fromBottom;
         const xFrom = cutPositiveX ? x0 - lead : x1 + lead;
         const xTo = cutPositiveX ? x1 + lead : x0 - lead;
         yLines.forEach((yy, i) => {
@@ -262,12 +271,13 @@ export function faceStockOps({
     pattern = 'zigzag',
     startCorner = 'bl',
     finishAllow = 0,
-    finishFeed = 0
+    finishFeed = 0,
+    spindleCW = true
 }) {
     const lines = [];
     if (!(faceDepth > 0) || !(x1 > x0) || !(y1 > y0) || !(toolD > 0)) return lines;
 
-    const path = buildFacePattern({ x0, y0, x1, y1, toolD, overlapPct, pattern, startCorner });
+    const path = buildFacePattern({ x0, y0, x1, y1, toolD, overlapPct, pattern, startCorner, spindleCW });
     if (path.length < 2) return lines;
 
     const startZ = Number.isFinite(topZ) ? topZ : 0;

@@ -448,6 +448,13 @@
                                 <label class="kv-label" for="faceSpindle">清掃主軸轉速 (RPM)</label>
                                 <input class="kv-field" type="number" id="faceSpindle" value="12000" step="1000" min="0" title="面銑刀具的主軸轉速，獨立於零件加工轉速。切換胚料材質時會自動依預設帶入">
                             </div>
+                            <div class="kv-row">
+                                <label class="kv-label" for="faceSpindleDir">清掃主軸轉向</label>
+                                <select class="kv-field" id="faceSpindleDir" title="決定輸出 M3 或 M4。「單向順銑」刀路的切削方向必須跟著轉向翻轉才會是順銑 — 選錯會整趟變成逆銑。一般右旋銑刀用順時針 M3">
+                                    <option value="cw" selected>順時針 (M3)</option>
+                                    <option value="ccw">逆時針 (M4)</option>
+                                </select>
+                            </div>
                             <div class="kv-row" data-advanced>
                                 <label class="kv-label" for="faceFeedZ">清掃進給 Z (mm/min)</label>
                                 <input class="kv-field" type="number" id="faceFeedZ" value="400" step="50" min="1" title="面銑刀具的下刀進給，獨立於零件加工進給">

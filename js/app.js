@@ -212,6 +212,7 @@ const DEFAULT_SETTINGS = {
     faceFeedXY: DEFAULT_MATERIAL_VALUES.faceFeedXY,
     faceFeedZ: DEFAULT_MATERIAL_VALUES.faceFeedZ,
     faceSpindle: DEFAULT_MATERIAL_VALUES.faceSpindle,
+    faceSpindleDir: 'cw',
     faceFinishAllow: DEFAULT_MATERIAL_VALUES.faceFinishAllow,
     faceFinishFeed: DEFAULT_MATERIAL_VALUES.faceFinishFeed,
     facePattern: 'zigzag',
@@ -681,6 +682,8 @@ function buildFaceOverlaySvg({ minX, maxX, minDisplayY, maxDisplayY, flipY }) {
     const overlapRaw = parseFloat(document.getElementById('faceOverlapPct')?.value);
     const overlapPct = Number.isFinite(overlapRaw) ? overlapRaw : 40;
     const pattern = document.getElementById('facePattern')?.value || 'zigzag';
+    // 單向順銑的切削方向跟著主軸轉向翻，預覽必須傳同一個值才會與 G-Code 一致
+    const spindleCW = document.getElementById('faceSpindleDir')?.value !== 'ccw';
     const faceOrigin = parseFaceOrigin(document.getElementById('faceOrigin')?.value).corner;
 
     // 機器座標的「下」在顯示座標的哪一側：DXF (flipY) 的 display=-machineY，
@@ -696,7 +699,8 @@ function buildFaceOverlaySvg({ minX, maxX, minDisplayY, maxDisplayY, flipY }) {
         toolD,
         overlapPct,
         pattern,
-        startCorner: displayCorner === 'center' ? 'bl' : displayCorner
+        startCorner: displayCorner === 'center' ? 'bl' : displayCorner,
+        spindleCW
     });
     const polyline = patternPts.length >= 2
         ? `<polyline class="face-path" points="${patternPts.map((p) => `${p.x.toFixed(3)},${p.y.toFixed(3)}`).join(' ')}"></polyline>`
@@ -1069,6 +1073,7 @@ function applySettingsToUi(settings = {}) {
         'faceFeedXY',
         'faceFeedZ',
         'faceSpindle',
+        'faceSpindleDir',
         'faceFinishAllow',
         'faceFinishFeed',
         'facePattern',
@@ -1213,6 +1218,8 @@ function getMfgData() {
         faceFeedXY: readNum('faceFeedXY', 1200),
         faceFeedZ: readNum('faceFeedZ', 400),
         faceSpindle: readNum('faceSpindle', 12000),
+        // 轉向不隨材料變（取決於刀具旋向），所以不進材料預設
+        faceSpindleDir: document.getElementById('faceSpindleDir')?.value === 'ccw' ? 'ccw' : 'cw',
         faceFinishAllow: readNum('faceFinishAllow', 0),
         faceFinishFeed: readNum('faceFinishFeed', 800),
         facePattern: document.getElementById('facePattern')?.value || 'zigzag',
@@ -1596,6 +1603,7 @@ function buildProgram() {
         // 清掃是獨立工序：改用自己的刀具與切削參數，不碰零件加工的設定。
         // thickness 在此僅代表胚料實體厚度（STOCK 註解與 3D 胚料框用）。
         effectiveMfg.spindle = mfg.faceSpindle;
+        effectiveMfg.spindleDir = mfg.faceSpindleDir;
         effectiveMfg.thickness = faceStockT > 0 ? faceStockT : faceDepth;
         effectiveMfg.surfaceCleanDepth = faceDepth;
     }
@@ -2166,7 +2174,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // 清掃/胚料參數變更 → 2D 疊加層與 3D 刀路即時更新
-    const facePreviewInputIds = ['stockW', 'stockH', 'stockT', 'surfaceCleanDepth', 'faceStepdown', 'faceOverlapPct', 'facePattern', 'faceOrigin', 'faceToolD', 'faceFinishAllow', 'faceFinishFeed'];
+    const facePreviewInputIds = ['stockW', 'stockH', 'stockT', 'surfaceCleanDepth', 'faceStepdown', 'faceOverlapPct', 'facePattern', 'faceOrigin', 'faceToolD', 'faceFinishAllow', 'faceFinishFeed', 'faceSpindleDir'];
     facePreviewInputIds.forEach((id) => {
         document.getElementById(id)?.addEventListener('change', () => {
             if (faceEnableCb?.checked) {

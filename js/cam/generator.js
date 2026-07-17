@@ -344,7 +344,8 @@ export function buildAllGcodes(parts, mfg) {
             pattern: mfg.facePattern,
             startCorner: mfg.faceOriginCorner === 'center' || !mfg.faceOriginCorner ? 'bl' : mfg.faceOriginCorner,
             finishAllow: mfg.faceFinishAllow,
-            finishFeed: mfg.faceFinishFeed
+            finishFeed: mfg.faceFinishFeed,
+            spindleCW: mfg.faceSpindleDir !== 'ccw'
         });
         return faceLines.length > 0
             ? [{ name: 'facing.nc', text: faceLines.join("\r\n") + "\r\n" }]
@@ -414,7 +415,8 @@ function generateFacingInfo(mfg) {
     info.push(`- XY 進給：${Number(mfg.faceFeedXY || 0).toFixed(0)} mm/min`);
     info.push(`- Z 進給：${Number(mfg.faceFeedZ || 0).toFixed(0)} mm/min`);
     if (Number.isFinite(mfg.faceSpindle) && mfg.faceSpindle > 0) {
-        info.push(`- 主軸轉速：${mfg.faceSpindle.toFixed(0)} RPM`);
+        const ccw = mfg.faceSpindleDir === 'ccw';
+        info.push(`- 主軸轉速：${mfg.faceSpindle.toFixed(0)} RPM，${ccw ? '逆時針 M4' : '順時針 M3'}`);
     }
     info.push(`- 安全高度：${Number(mfg.safeZ || 0).toFixed(2)} mm`);
     info.push(`- 冷卻/氣吹：${mfg.coolantEnable ? '啟用 M8/M9' : '停用'}`);
