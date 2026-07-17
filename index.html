@@ -340,14 +340,15 @@
                             </div>
                             <div class="kv-row">
                                 <label class="kv-label" for="stockT">胚料厚度 Z (mm)</label>
-                                <input class="kv-field" type="number" id="stockT" value="0" step="0.1" min="0" title="粗胚的實際量測厚度（會大於材料厚度）。底面對刀時清掃量自動 = 胚料厚 − 材料厚。0 = 未量測">
+                                <input class="kv-field" type="number" id="stockT" value="0" step="0.1" min="0" title="粗胚目前的實際量測厚度。底面對刀時＝刀具從床台算起的胚料頂面高度。每清掃一次就變薄，翻面前請重新量測並更新">
                             </div>
                         </div>
                         <div id="faceSettings" style="display:none;">
+                            <p class="face-note">清掃是<strong>獨立工序</strong>，使用自己的刀具與切削參數，與零件加工無關。啟用時只會輸出清掃程式；零件刀路請取消清掃後另外生成。</p>
                             <div class="settings-kv">
                                 <div class="kv-row">
                                     <label class="kv-label" for="faceOrigin">刀具定位點（對刀原點）</label>
-                                    <select class="kv-field" id="faceOrigin" title="操作者把刀停在這個位置設為 X0 Y0 Z0。頂面：碰粗胚頂面，掃掉指定深度；底面：碰角落旁的床台，掃到剩下正好等於材料厚度（工件高精確）。中心只能碰頂面">
+                                    <select class="kv-field" id="faceOrigin" title="操作者把刀停在這個位置設為 X0 Y0 Z0。頂面：碰粗胚頂面，往下掃「清掃量」（第一刀取真平）。底面：碰角落旁的床台，從「胚料厚度 Z」往下掃「清掃量」（翻面後取平行面）。中心只能碰頂面">
                                         <option value="bl-top" selected>左下角・頂面</option>
                                         <option value="bl-bottom">左下角・底面</option>
                                         <option value="br-top">右下角・頂面</option>
@@ -360,12 +361,32 @@
                                     </select>
                                 </div>
                                 <div class="kv-row">
-                                    <label class="kv-label" for="surfaceCleanDepth" id="faceDepthLabel">清掃總深度 (mm)</label>
-                                    <input class="kv-field" type="number" id="surfaceCleanDepth" value="0.2" step="0.05" min="0" title="要從胚料頂面掃掉的總厚度">
+                                    <label class="kv-label" for="surfaceCleanDepth">清掃量 (mm)</label>
+                                    <input class="kv-field" type="number" id="surfaceCleanDepth" value="0.2" step="0.05" min="0" title="從胚料頂面往下掃掉的總厚度，由你決定。第一刀（頂面對刀）要大於粗胚表面的起伏量才掃得乾淨">
+                                </div>
+                                <div class="kv-row">
+                                    <label class="kv-label" for="faceResultT">掃完剩餘厚度 (mm)</label>
+                                    <input class="kv-field" type="text" id="faceResultT" readonly tabindex="-1" title="＝ 胚料厚度 Z − 清掃量。僅供對照，不是輸入值">
+                                </div>
+                                <div class="kv-row">
+                                    <label class="kv-label" for="faceToolD">清掃刀具直徑 (mm)</label>
+                                    <input class="kv-field" type="number" id="faceToolD" value="6" step="0.1" min="0.1" title="面銑刀具直徑，獨立於零件加工的刀具直徑。清掃跑完需停機換刀，才能加工零件">
+                                </div>
+                                <div class="kv-row" data-advanced>
+                                    <label class="kv-label" for="faceFeedXY">清掃進給 XY (mm/min)</label>
+                                    <input class="kv-field" type="number" id="faceFeedXY" value="1200" step="50" min="1" title="面銑刀具的水平進給，獨立於零件加工進給">
+                                </div>
+                                <div class="kv-row" data-advanced>
+                                    <label class="kv-label" for="faceFeedZ">清掃進給 Z (mm/min)</label>
+                                    <input class="kv-field" type="number" id="faceFeedZ" value="400" step="50" min="1" title="面銑刀具的下刀進給，獨立於零件加工進給">
+                                </div>
+                                <div class="kv-row" data-advanced>
+                                    <label class="kv-label" for="faceSpindle">清掃主軸轉速 (RPM)</label>
+                                    <input class="kv-field" type="number" id="faceSpindle" value="12000" step="1000" min="0" title="面銑刀具的主軸轉速，獨立於零件加工轉速">
                                 </div>
                                 <div class="kv-row" data-advanced>
                                     <label class="kv-label" for="faceStepdown">每層下切量 (mm)</label>
-                                    <input class="kv-field" type="number" id="faceStepdown" value="1" step="0.1" min="0.05" title="面銑每一層往下切的深度，會分層切到清掃總深度">
+                                    <input class="kv-field" type="number" id="faceStepdown" value="1" step="0.1" min="0.05" title="面銑每一層往下切的深度，會分層切到清掃量">
                                 </div>
                                 <div class="kv-row" data-advanced>
                                     <label class="kv-label" for="facePattern">刀路路徑類型</label>

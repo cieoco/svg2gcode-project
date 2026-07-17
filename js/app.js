@@ -37,6 +37,7 @@ const UI_MODE_STORAGE_KEY = 'svg2gcode_ui_mode';
 const SETTINGS_STORAGE_KEY = 'svg2gcode_settings';
 const DEFAULT_MATERIAL = 'wood';
 const DEFAULT_TOOL_D = 3.175;
+const DEFAULT_FACE_TOOL_D = 6;
 const MATERIAL_PRESETS = {
     wood: {
         label: '木材',
@@ -51,14 +52,19 @@ const MATERIAL_PRESETS = {
             coolantEnable: false,
             surfaceCleanDepth: 0.3,
             faceStepdown: 1.0,
-            faceOverlapPct: 30
+            faceOverlapPct: 30,
+            faceFeedXY: 1200,
+            faceFeedZ: 400,
+            faceSpindle: 12000
         },
         limits: {
             stepdown: [0.3, 6.0],
             feedXY: [400, 3500],
             feedZ: [100, 1000],
             surfaceCleanDepth: [0.05, 1.0],
-            faceStepdown: [0.2, 3.0]
+            faceStepdown: [0.2, 3.0],
+            faceFeedXY: [400, 3000],
+            faceFeedZ: [100, 900]
         }
     },
     plastic: {
@@ -74,7 +80,10 @@ const MATERIAL_PRESETS = {
             coolantEnable: false,
             surfaceCleanDepth: 0.2,
             faceStepdown: 0.6,
-            faceOverlapPct: 55
+            faceOverlapPct: 55,
+            faceFeedXY: 800,
+            faceFeedZ: 220,
+            faceSpindle: 8000
         },
         limits: {
             stepdown: [0.15, 3.0],
@@ -82,7 +91,9 @@ const MATERIAL_PRESETS = {
             feedZ: [80, 600],
             peckStep: [0.1, 2.0],
             surfaceCleanDepth: [0.03, 0.6],
-            faceStepdown: [0.15, 2.0]
+            faceStepdown: [0.15, 2.0],
+            faceFeedXY: [250, 1600],
+            faceFeedZ: [80, 500]
         }
     },
     aluminum: {
@@ -98,7 +109,10 @@ const MATERIAL_PRESETS = {
             coolantEnable: true,
             surfaceCleanDepth: 0.1,
             faceStepdown: 0.3,
-            faceOverlapPct: 65
+            faceOverlapPct: 65,
+            faceFeedXY: 400,
+            faceFeedZ: 100,
+            faceSpindle: 10000
         },
         limits: {
             stepdown: [0.05, 2.0],
@@ -106,11 +120,16 @@ const MATERIAL_PRESETS = {
             feedZ: [40, 350],
             peckStep: [0.1, 1.5],
             surfaceCleanDepth: [0.02, 0.35],
-            faceStepdown: [0.05, 1.0]
+            faceStepdown: [0.05, 1.0],
+            faceFeedXY: [120, 1000],
+            faceFeedZ: [40, 300]
         }
     }
 };
-const TOOL_DIAMETER_SCALED_FIELDS = ['stepdown', 'feedXY', 'feedZ', 'peckStep', 'surfaceCleanDepth', 'faceStepdown'];
+// 清掃是獨立工序，用自己的刀具直徑換算；零件欄位仍依零件刀徑換算。
+const PART_TOOL_SCALED_FIELDS = ['stepdown', 'feedXY', 'feedZ', 'peckStep'];
+const FACE_TOOL_SCALED_FIELDS = ['surfaceCleanDepth', 'faceStepdown', 'faceFeedXY', 'faceFeedZ'];
+const ROUNDED_FEED_FIELDS = ['feedXY', 'feedZ', 'faceFeedXY', 'faceFeedZ'];
 
 function clamp(value, min, max) {
     return Math.min(Math.max(value, min), max);
@@ -125,28 +144,33 @@ function getMaterialPreset(materialType) {
     return MATERIAL_PRESETS[materialType] || MATERIAL_PRESETS[DEFAULT_MATERIAL];
 }
 
-function getMaterialPresetValues(materialType, toolD = DEFAULT_TOOL_D) {
+function getMaterialPresetValues(materialType, toolD = DEFAULT_TOOL_D, faceToolD = DEFAULT_FACE_TOOL_D) {
     const preset = getMaterialPreset(materialType);
-    const d = Number.isFinite(toolD) && toolD > 0 ? toolD : DEFAULT_TOOL_D;
-    const ratio = d / DEFAULT_TOOL_D;
     const values = { ...preset.values };
 
-    TOOL_DIAMETER_SCALED_FIELDS.forEach((field) => {
-        if (!Number.isFinite(values[field])) return;
-        let nextValue = values[field] * ratio;
-        const limit = preset.limits?.[field];
-        if (limit) {
-            nextValue = clamp(nextValue, limit[0], limit[1]);
-        }
-        values[field] = field === 'feedXY' || field === 'feedZ'
-            ? Math.round(nextValue)
-            : roundTo(nextValue, 3);
-    });
+    const scaleFields = (fields, diameter) => {
+        const d = Number.isFinite(diameter) && diameter > 0 ? diameter : DEFAULT_TOOL_D;
+        const ratio = d / DEFAULT_TOOL_D;
+        fields.forEach((field) => {
+            if (!Number.isFinite(values[field])) return;
+            let nextValue = values[field] * ratio;
+            const limit = preset.limits?.[field];
+            if (limit) {
+                nextValue = clamp(nextValue, limit[0], limit[1]);
+            }
+            values[field] = ROUNDED_FEED_FIELDS.includes(field)
+                ? Math.round(nextValue)
+                : roundTo(nextValue, 3);
+        });
+    };
+
+    scaleFields(PART_TOOL_SCALED_FIELDS, toolD);
+    scaleFields(FACE_TOOL_SCALED_FIELDS, faceToolD);
 
     return values;
 }
 
-const DEFAULT_MATERIAL_VALUES = getMaterialPresetValues(DEFAULT_MATERIAL, DEFAULT_TOOL_D);
+const DEFAULT_MATERIAL_VALUES = getMaterialPresetValues(DEFAULT_MATERIAL, DEFAULT_TOOL_D, DEFAULT_FACE_TOOL_D);
 const DEFAULT_SETTINGS = {
     materialType: DEFAULT_MATERIAL,
     rotateAngle: 0,
@@ -174,6 +198,10 @@ const DEFAULT_SETTINGS = {
     surfaceCleanDepth: DEFAULT_MATERIAL_VALUES.surfaceCleanDepth,
     faceStepdown: DEFAULT_MATERIAL_VALUES.faceStepdown,
     faceOverlapPct: DEFAULT_MATERIAL_VALUES.faceOverlapPct,
+    faceToolD: DEFAULT_FACE_TOOL_D,
+    faceFeedXY: DEFAULT_MATERIAL_VALUES.faceFeedXY,
+    faceFeedZ: DEFAULT_MATERIAL_VALUES.faceFeedZ,
+    faceSpindle: DEFAULT_MATERIAL_VALUES.faceSpindle,
     facePattern: 'zigzag',
     faceOrigin: 'bl-top',
     faceEnable: false,
@@ -436,6 +464,12 @@ function getCurrentToolDiameter() {
     return Number.isFinite(value) && value > 0 ? value : DEFAULT_TOOL_D;
 }
 
+function getCurrentFaceToolDiameter() {
+    const toolInput = document.getElementById('faceToolD');
+    const value = toolInput ? parseFloat(toolInput.value) : DEFAULT_FACE_TOOL_D;
+    return Number.isFinite(value) && value > 0 ? value : DEFAULT_FACE_TOOL_D;
+}
+
 function applyMaterialPreset(materialType, options = {}) {
     const preset = getMaterialPreset(materialType);
     setFieldValue('materialType', MATERIAL_PRESETS[materialType] ? materialType : DEFAULT_MATERIAL);
@@ -443,14 +477,17 @@ function applyMaterialPreset(materialType, options = {}) {
     const toolD = Number.isFinite(options.toolD) && options.toolD > 0
         ? options.toolD
         : getCurrentToolDiameter();
-    const values = getMaterialPresetValues(materialType, toolD);
+    const faceToolD = Number.isFinite(options.faceToolD) && options.faceToolD > 0
+        ? options.faceToolD
+        : getCurrentFaceToolDiameter();
+    const values = getMaterialPresetValues(materialType, toolD, faceToolD);
 
     Object.entries(values).forEach(([id, value]) => {
         setFieldValue(id, value);
     });
 
     if (options.announce) {
-        log(`已依刀徑 ${toolD.toFixed(3)} mm 套用 ${preset.label} 加工預設。`);
+        log(`已套用 ${preset.label} 加工預設（零件刀徑 ${toolD.toFixed(3)} mm、清掃刀徑 ${faceToolD.toFixed(3)} mm）。`);
     }
 }
 
@@ -627,7 +664,8 @@ function buildFaceOverlaySvg({ minX, maxX, minDisplayY, maxDisplayY, flipY }) {
     const sy0 = cy - stockH / 2;
     const sy1 = cy + stockH / 2;
 
-    const toolD = readNum('toolD', DEFAULT_TOOL_D);
+    // 清掃有自己的刀具，預覽刀路必須用清掃刀徑，不是零件刀徑
+    const toolD = readNum('faceToolD', DEFAULT_FACE_TOOL_D);
     const overlapRaw = parseFloat(document.getElementById('faceOverlapPct')?.value);
     const overlapPct = Number.isFinite(overlapRaw) ? overlapRaw : 40;
     const pattern = document.getElementById('facePattern')?.value || 'zigzag';
@@ -1015,6 +1053,10 @@ function applySettingsToUi(settings = {}) {
         'surfaceCleanDepth',
         'faceStepdown',
         'faceOverlapPct',
+        'faceToolD',
+        'faceFeedXY',
+        'faceFeedZ',
+        'faceSpindle',
         'facePattern',
         'faceOrigin',
         'arrayCountX',
@@ -1146,6 +1188,11 @@ function getMfgData() {
         surfaceCleanDepth: readNum('surfaceCleanDepth', 0.2),
         faceStepdown: readNum('faceStepdown', 1),
         faceOverlapPct: readNum('faceOverlapPct', 40),
+        // 清掃自己的刀具與切削參數（獨立工序，與零件加工無關）
+        faceToolD: readNum('faceToolD', DEFAULT_FACE_TOOL_D),
+        faceFeedXY: readNum('faceFeedXY', 1200),
+        faceFeedZ: readNum('faceFeedZ', 400),
+        faceSpindle: readNum('faceSpindle', 12000),
         facePattern: document.getElementById('facePattern')?.value || 'zigzag',
         faceOrigin: document.getElementById('faceOrigin')?.value || 'bl',
 
@@ -1507,21 +1554,14 @@ function buildProgram() {
 
     const activeParts = partsToProcess.filter((part) => ACTIVE_TOOLPATH_MODES.includes(part.toolpathMode));
 
-    // 清掃 Z 模型：材料厚度 = 成品工件高；胚料厚度 = 粗胚實際量測值。
-    //  - 頂面對刀（第一次清掃，取真平）：掃掉「清掃總深度」。
-    //  - 底面對刀（翻面/最終取高）：清掃量自動 = 胚料厚 − 材料厚，
-    //    未量測胚料厚（0）時退回手動「預留量」。
-    const faceUserDepth = Math.max(0, mfg.surfaceCleanDepth || 0);
-    const finalHeight = mfg.thickness || 0;
-    let faceRoughT;
-    let faceDepth;
-    if (faceOriginParsed.zref === 'bottom') {
-        faceRoughT = mfg.stockT > 0 ? mfg.stockT : finalHeight + faceUserDepth;
-        faceDepth = Math.max(0, faceRoughT - finalHeight);
-    } else {
-        faceRoughT = mfg.stockT > 0 ? Math.max(mfg.stockT, finalHeight) : finalHeight;
-        faceDepth = faceUserDepth;
-    }
+    // 清掃 Z 模型：獨立於材料厚度，只看「胚料厚度 Z」與對刀定位點。
+    // 兩種模式都是「從胚料頂面往下掃掉『清掃量』」，差別只在 Z0 擺哪：
+    //  - 頂面對刀（第一刀取真平）：Z0 = 胚料頂面，掃 0 → −清掃量。
+    //  - 底面對刀（翻面後取平行面）：Z0 = 床台，胚料頂面在 +胚料厚度 Z，
+    //    掃 胚料厚度 → 胚料厚度 − 清掃量。
+    // 程式無從得知這是第一刀還是第二刀，由操作者用定位點自行決定。
+    const faceDepth = Math.max(0, mfg.surfaceCleanDepth || 0);
+    const faceStockT = Math.max(0, mfg.stockT || 0);
 
     const faceActive = Boolean(effectiveMfg.faceEnable)
         && faceDepth > 0
@@ -1531,17 +1571,34 @@ function buildProgram() {
     }
 
     if (faceActive) {
-        // 內部幾何一律以粗胚厚度計算：切穿深度、支撐橋高度、STOCK 註解
-        // 與 3D 胚料框才會落在正確的實體位置
-        effectiveMfg.thickness = faceRoughT;
+        // 清掃是獨立工序：改用自己的刀具與切削參數，不碰零件加工的設定。
+        // thickness 在此僅代表胚料實體厚度（STOCK 註解與 3D 胚料框用）。
+        effectiveMfg.spindle = mfg.faceSpindle;
+        effectiveMfg.thickness = faceStockT > 0 ? faceStockT : faceDepth;
         effectiveMfg.surfaceCleanDepth = faceDepth;
     }
 
-    const safetyWarnings = collectSafetyWarnings(partsToProcess, effectiveMfg);
-    if (Boolean(mfg.faceEnable) && mfg.stockT > 0 && mfg.stockT < finalHeight - 1e-6) {
-        safetyWarnings.push(`胚料厚度 ${mfg.stockT.toFixed(2)} mm 小於材料厚度 ${finalHeight.toFixed(2)} mm，掃不出目標工件高，請確認量測值。`);
+    // 以下兩種設定必然讓刀具切進床台，不是「提醒一下」的等級 —— 安全警告是
+    // 檔案下載後才顯示的，撞機程式那時已經到操作者手上，所以直接擋掉不生成。
+    if (faceActive && faceOriginParsed.zref === 'bottom' && faceStockT <= 0) {
+        return {
+            blocked: true,
+            blockedReason: '底面對刀需要「胚料厚度 Z」當 Z 基準（刀具從床台算起的胚料頂面高度）。\n目前是 0（未量測），程式會從床台面往下切，直接撞床台。\n\n請量測翻面後的胚料厚度並填入「胚料厚度 Z」。'
+        };
     }
-    if (stockTooSmall) {
+    if (faceActive && faceStockT > 0 && faceDepth > faceStockT - 1e-6) {
+        return {
+            blocked: true,
+            blockedReason: `清掃量 ${faceDepth.toFixed(2)} mm 已達或超過胚料厚度 ${faceStockT.toFixed(2)} mm，會把胚料整片掃穿並切到床台。\n\n請把清掃量改小於胚料厚度（掃完剩餘厚度必須大於 0）。`
+        };
+    }
+
+    // 清掃啟用時只輸出清掃程式，零件刀路不生成，零件相關警告也就無意義
+    const safetyWarnings = collectSafetyWarnings(faceActive ? [] : partsToProcess, effectiveMfg);
+    if (faceActive && activeParts.length > 0) {
+        safetyWarnings.push(`清掃為獨立工序，本次只輸出清掃程式，已指定的 ${activeParts.length} 條零件刀路不會生成。零件加工請取消「清掃」後再生成一次。`);
+    }
+    if (stockTooSmall && !faceActive) {
         const designW = extents.maxX - extents.minX;
         const designH = extents.maxY - extents.minY;
         safetyWarnings.push(`設定的胚料 ${stockW.toFixed(1)}×${stockH.toFixed(1)} mm 小於圖形範圍 ${designW.toFixed(1)}×${designH.toFixed(1)} mm（含陣列/旋轉後），部分刀路會切到胚料外。`);
@@ -1578,19 +1635,19 @@ function buildProgram() {
 
     if (faceActive && effectiveMfg.stockBounds) {
         // 啟用清掃時：程式原點 = 刀具定位點（胚料上的對刀點），
-        // 工件原點下拉此時不生效。
-        //  - 頂面對刀：Z0 = 粗胚頂面，清掃掃掉「總深度」。
-        //  - 底面對刀：Z0 = 胚料底面（床台），清掃從 材料厚度+預留量 掃到
-        //    材料厚度，成品工件高精確等於材料厚度。
+        // 工件原點下拉此時不生效。Z 基準只依胚料厚度，與材料厚度無關。
+        //  - 頂面對刀：Z0 = 胚料頂面，掃 0 → −清掃量。
+        //  - 底面對刀：Z0 = 床台，胚料頂面在 +胚料厚度 Z。
         const sb = effectiveMfg.stockBounds;
         const { corner, zref } = faceOriginParsed;
         offsetX = -(corner === 'br' || corner === 'tr' ? sb.maxX : corner === 'center' ? (sb.minX + sb.maxX) / 2 : sb.minX);
         offsetY = -(corner === 'tl' || corner === 'tr' ? sb.maxY : corner === 'center' ? (sb.minY + sb.maxY) / 2 : sb.minY);
-        // effectiveMfg.thickness 在底面模式已含預留量（= 粗胚厚度）
-        offsetZ = zref === 'bottom' ? (effectiveMfg.thickness || 0) : 0;
+        offsetZ = zref === 'bottom' ? faceStockT : 0;
+        const remainT = faceStockT > 0 ? (faceStockT - faceDepth) : null;
+        const remainNote = remainT === null ? '' : `，掃完剩 ${remainT.toFixed(2)} mm`;
         originLabel = zref === 'bottom'
-            ? `${FACE_CORNER_NAMES[corner]}・底面（床台，清掃後工件高 = 材料厚度 ${(mfg.thickness || 0).toFixed(2)} mm）`
-            : `${FACE_CORNER_NAMES[corner]}・頂面（清掃對刀點）`;
+            ? `${FACE_CORNER_NAMES[corner]}・底面（床台 Z0，胚料頂面 Z${faceStockT.toFixed(2)}${remainNote}）`
+            : `${FACE_CORNER_NAMES[corner]}・頂面（胚料頂面 Z0，掃 ${faceDepth.toFixed(2)} mm${remainNote}）`;
     } else if (extents.minX !== Infinity) {
         const cx = (extents.minX + extents.maxX) / 2;
         const cy = (extents.minY + extents.maxY) / 2;
@@ -1633,7 +1690,7 @@ function buildProgram() {
         : { ...effectiveMfg };
     if (faceActive) {
         // 3D 胚料框依對刀 Z 基準擺放：頂面對刀時框在 Z0 之下（清掃面在框
-        // 頂），底面對刀時框在 Z0 之上。厚度已是粗胚厚度（底面模式含預留量）
+        // 頂），底面對刀時框在 Z0 之上。厚度即胚料厚度 Z。
         viewerMfg.originMode = faceOriginParsed.zref === 'bottom' ? 'bottom-face' : 'top-face';
     }
 
@@ -1656,7 +1713,8 @@ generateBtn.addEventListener('click', () => {
         const program = buildProgram();
         if (!program) return;
         if (program.blocked) {
-            log('尚未指定任何刀路，無法生成 G-Code。\n請先在左側 2D 視圖：\n1. 點選上方的刀路模式（例如「銑線外」）\n2. 再點擊圖形中的線條，把刀路套用到該線段\n（或在「胚料與表面清掃」啟用清掃並填好胚料長寬）');
+            log(program.blockedReason
+                || '尚未指定任何刀路，無法生成 G-Code。\n請先在左側 2D 視圖：\n1. 點選上方的刀路模式（例如「銑線外」）\n2. 再點擊圖形中的線條，把刀路套用到該線段\n（或在「胚料與表面清掃」啟用清掃並填好胚料長寬）');
             return;
         }
 
@@ -2049,41 +2107,44 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // 深度欄位隨對刀 Z 基準切換意義：
-    //  - 頂面：手動「清掃總深度」（第一次清掃取真平）
-    //  - 底面 + 已量測胚料厚：自動 = 胚料厚 − 材料厚，欄位唯讀
-    //  - 底面 + 未量測（胚料厚 0）：手動「預留量」
-    const faceDepthLabelEl = document.getElementById('faceDepthLabel');
-    const faceDepthInputEl = document.getElementById('surfaceCleanDepth');
-    const syncFaceDepthField = () => {
-        if (!faceDepthLabelEl || !faceDepthInputEl) return;
-        const { zref } = parseFaceOrigin(document.getElementById('faceOrigin')?.value);
+    // 「掃完剩餘厚度」是對照用的唯讀顯示，不是輸入：清掃量一律由使用者決定。
+    // （程式無從得知這是第一刀還是翻面後的第二刀，不能替他算。）
+    const faceResultTEl = document.getElementById('faceResultT');
+    const syncFaceResultT = () => {
+        if (!faceResultTEl) return;
         const stockTVal = parseFloat(document.getElementById('stockT')?.value) || 0;
-        const thicknessVal = parseFloat(document.getElementById('thickness')?.value) || 0;
-
-        if (zref === 'bottom' && stockTVal > 0) {
-            const autoDepth = Math.max(0, stockTVal - thicknessVal);
-            faceDepthInputEl.value = Math.round(autoDepth * 1000) / 1000;
-            faceDepthInputEl.readOnly = true;
-            faceDepthLabelEl.textContent = '清掃量（自動）(mm)';
-            faceDepthInputEl.title = '自動計算：胚料厚度 − 材料厚度。清掃到成品工件高 = 材料厚度';
-        } else if (zref === 'bottom') {
-            faceDepthInputEl.readOnly = false;
-            faceDepthLabelEl.textContent = '清掃預留量 (mm)';
-            faceDepthInputEl.title = '未量測胚料厚度：手動填粗胚高出材料厚度的預估餘量，清掃到成品工件高 = 材料厚度';
-        } else {
-            faceDepthInputEl.readOnly = false;
-            faceDepthLabelEl.textContent = '清掃總深度 (mm)';
-            faceDepthInputEl.title = '要從碰刀的粗胚頂面往下掃掉的總厚度（第一次清掃取真平）';
+        const depthVal = parseFloat(document.getElementById('surfaceCleanDepth')?.value) || 0;
+        if (stockTVal <= 0) {
+            faceResultTEl.value = '— （請先填胚料厚度 Z）';
+            return;
         }
+        const remain = stockTVal - depthVal;
+        faceResultTEl.value = remain > 0
+            ? `${(Math.round(remain * 1000) / 1000).toFixed(3)}`
+            : `${remain.toFixed(3)} ⚠ 會掃穿胚料`;
     };
-    syncFaceDepthField();
-    ['faceOrigin', 'stockT', 'thickness', 'materialType'].forEach((id) => {
-        document.getElementById(id)?.addEventListener('change', syncFaceDepthField);
+    syncFaceResultT();
+    // materialType / faceToolD 不掛在這裡：它們會觸發 applyMaterialPreset 覆寫
+    // 清掃量，必須等預設寫完才重算，否則顯示的是被蓋掉前的舊值。
+    ['stockT', 'surfaceCleanDepth'].forEach((id) => {
+        document.getElementById(id)?.addEventListener('change', syncFaceResultT);
+        document.getElementById(id)?.addEventListener('input', syncFaceResultT);
     });
 
+    // 清掃刀徑變更 → 依材料預設重算清掃參數（零件刀徑走另一條）
+    const faceToolDEl = document.getElementById('faceToolD');
+    if (faceToolDEl) {
+        faceToolDEl.addEventListener('change', () => {
+            applyMaterialPreset(document.getElementById('materialType')?.value || DEFAULT_MATERIAL, {
+                announce: true,
+                faceToolD: getCurrentFaceToolDiameter()
+            });
+            syncFaceResultT();
+        });
+    }
+
     // 清掃/胚料參數變更 → 2D 疊加層與 3D 刀路即時更新
-    const facePreviewInputIds = ['stockW', 'stockH', 'stockT', 'surfaceCleanDepth', 'faceStepdown', 'faceOverlapPct', 'facePattern', 'faceOrigin', 'toolD', 'thickness'];
+    const facePreviewInputIds = ['stockW', 'stockH', 'stockT', 'surfaceCleanDepth', 'faceStepdown', 'faceOverlapPct', 'facePattern', 'faceOrigin', 'faceToolD'];
     facePreviewInputIds.forEach((id) => {
         document.getElementById(id)?.addEventListener('change', () => {
             if (faceEnableCb?.checked) {
@@ -2123,6 +2184,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (materialTypeEl) {
         materialTypeEl.addEventListener('change', () => {
             applyMaterialPreset(materialTypeEl.value, { announce: true });
+            syncFaceResultT();
         });
     }
 

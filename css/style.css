@@ -849,6 +849,29 @@ body:not(.mode-simple) .simple-guide {
     display: none;
 }
 
+/* ===== 清掃：獨立工序提示 ===== */
+.face-note {
+    margin: 0 0 10px;
+    padding: 8px 10px;
+    border-left: 3px solid var(--success);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    line-height: 1.5;
+}
+
+.face-note strong {
+    color: var(--text-main);
+}
+
+/* 掃完剩餘厚度：唯讀對照值，不是輸入欄 */
+#faceResultT {
+    background: var(--surface);
+    color: var(--text-muted);
+    cursor: default;
+}
+
 /* ===== 清掃 2D 預覽疊加層 ===== */
 #previewSvg svg .face-overlay,
 #previewSvg svg .face-overlay * {

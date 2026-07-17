@@ -321,10 +321,11 @@ export function buildPartGcode(part, mfg) {
  */
 export function buildAllGcodes(parts, mfg) {
     const files = [];
-    let stockTopZ = Number.isFinite(mfg.stockTopZ) ? mfg.stockTopZ : 0;
+    const stockTopZ = Number.isFinite(mfg.stockTopZ) ? mfg.stockTopZ : 0;
 
-    // 胚料表面清掃：獨立於工件的前置作業，先整平胚料頂面，
-    // 之後所有工件刀路都從掃平後的新頂面 (stockTopZ) 起算
+    // 胚料表面清掃：胚料的前置加工（取真平），是一道「完全獨立的工序」——
+    // 它用自己的刀具、進給與轉速，跑完必須停機換刀、重新對刀才能加工零件。
+    // 因此啟用清掃時只輸出清掃程式，絕不把零件刀路混進同一支程式。
     const faceDepth = Math.max(0, mfg.surfaceCleanDepth || 0);
     if (mfg.faceEnable && faceDepth > 0 && mfg.stockBounds) {
         const faceLines = faceStockOps({
@@ -332,21 +333,20 @@ export function buildAllGcodes(parts, mfg) {
             y0: mfg.stockBounds.minY,
             x1: mfg.stockBounds.maxX,
             y1: mfg.stockBounds.maxY,
-            toolD: mfg.toolD,
+            toolD: mfg.faceToolD,
             overlapPct: mfg.faceOverlapPct,
             faceDepth,
             faceStepdown: mfg.faceStepdown,
             safeZ: mfg.safeZ,
-            feedXY: mfg.feedXY,
-            feedZ: mfg.feedZ,
+            feedXY: mfg.faceFeedXY,
+            feedZ: mfg.faceFeedZ,
             topZ: stockTopZ,
             pattern: mfg.facePattern,
             startCorner: mfg.faceOriginCorner === 'center' || !mfg.faceOriginCorner ? 'bl' : mfg.faceOriginCorner
         });
-        if (faceLines.length > 0) {
-            files.push({ name: 'facing.nc', text: faceLines.join("\r\n") + "\r\n" });
-            stockTopZ -= faceDepth;
-        }
+        return faceLines.length > 0
+            ? [{ name: 'facing.nc', text: faceLines.join("\r\n") + "\r\n" }]
+            : [];
     }
 
     for (const p of parts) {
@@ -364,7 +364,58 @@ export function buildAllGcodes(parts, mfg) {
  * @param {Object} layout - 版面與變換設定
  * @returns {string} 摘要文字
  */
+/**
+ * 清掃（獨立工序）的加工摘要。Z 只依胚料厚度與對刀定位點，與材料厚度無關。
+ */
+function generateFacingInfo(mfg) {
+    const cornerNames = { bl: '胚料左下角', br: '胚料右下角', tl: '胚料左上角', tr: '胚料右上角', center: '胚料中心' };
+    const cornerName = cornerNames[mfg.faceOriginCorner] || cornerNames.bl;
+    const patternName = mfg.facePattern === 'spiral' ? '環繞（外→內）' : '往復（Zigzag）';
+    const depth = mfg.surfaceCleanDepth;
+    const perPass = Number.isFinite(mfg.faceStepdown) && mfg.faceStepdown > 0 ? mfg.faceStepdown : depth;
+    const layers = Math.max(1, Math.ceil(depth / Math.max(perPass, 1e-6)));
+    const stockT = Math.max(0, mfg.stockT || 0);
+    const toolD = Number.isFinite(mfg.faceToolD) && mfg.faceToolD > 0 ? mfg.faceToolD : 0;
+    const overlapPct = Number(mfg.faceOverlapPct || 40);
+    const sw = mfg.stockBounds.maxX - mfg.stockBounds.minX;
+    const sh = mfg.stockBounds.maxY - mfg.stockBounds.minY;
+
+    const info = [];
+    info.push('加工參數摘要（胚料表面清掃）：');
+    info.push('- 本程式為獨立工序，只含清掃刀路，不含任何零件加工');
+    info.push(`- 加工材料：${materialName(mfg.materialType)}`);
+    info.push(`- 胚料尺寸：${sw.toFixed(1)} × ${sh.toFixed(1)}${stockT > 0 ? ` × ${stockT.toFixed(2)}` : ''} mm`);
+    info.push(`- 清掃量：${depth.toFixed(2)} mm，每層下切 ${perPass.toFixed(2)} mm，共 ${layers} 層`);
+    if (stockT > 0) {
+        info.push(`- 掃完剩餘厚度：${(stockT - depth).toFixed(2)} mm`);
+    }
+    if (mfg.faceOriginZ === 'bottom') {
+        info.push(`- 對刀定位點：${cornerName}・底面（床台 X0 Y0 Z0），清掃從 Z${stockT.toFixed(2)} 掃到 Z${(stockT - depth).toFixed(2)}`);
+    } else {
+        info.push(`- 對刀定位點：${cornerName}・頂面（胚料頂面 X0 Y0 Z0），清掃從 Z0 掃到 Z${(-depth).toFixed(2)}`);
+    }
+    info.push(`- 刀路：${patternName}，重疊 ${overlapPct.toFixed(0)}% 刀徑（步距 ${(toolD * (1 - overlapPct / 100)).toFixed(2)} mm）`);
+    info.push(`- 清掃刀徑：${toolD.toFixed(2)} mm`);
+    info.push(`- XY 進給：${Number(mfg.faceFeedXY || 0).toFixed(0)} mm/min`);
+    info.push(`- Z 進給：${Number(mfg.faceFeedZ || 0).toFixed(0)} mm/min`);
+    if (Number.isFinite(mfg.faceSpindle) && mfg.faceSpindle > 0) {
+        info.push(`- 主軸轉速：${mfg.faceSpindle.toFixed(0)} RPM`);
+    }
+    info.push(`- 安全高度：${Number(mfg.safeZ || 0).toFixed(2)} mm`);
+    info.push(`- 冷卻/氣吹：${mfg.coolantEnable ? '啟用 M8/M9' : '停用'}`);
+    info.push(`- 後處理器：${mfg.postProcessor === 'mach3' ? 'MACH3' : 'GRBL'}`);
+    info.push('');
+    info.push('※ 清掃跑完請停機換刀、重新對刀，再取消「清掃」生成零件加工程式。');
+    return info.join('\n');
+}
+
 export function generateMachiningInfo(mfg, partCount, layout = {}) {
+    // 清掃啟用時本次只輸出清掃程式，摘要就只講清掃：零件的切深/層數/刀徑
+    // 都不會用到，列出來只會誤導操作者。
+    if (mfg.faceEnable && Number.isFinite(mfg.surfaceCleanDepth) && mfg.surfaceCleanDepth > 0 && mfg.stockBounds) {
+        return generateFacingInfo(mfg);
+    }
+
     const cutDepth = mfg.thickness + mfg.overcut;
     const stockTopZ = Number.isFinite(mfg.stockTopZ) ? mfg.stockTopZ : 0;
     const cuttingDistance = Math.max(0, cutDepth + stockTopZ);
@@ -388,21 +439,6 @@ export function generateMachiningInfo(mfg, partCount, layout = {}) {
         const sw = mfg.stockBounds.maxX - mfg.stockBounds.minX;
         const sh = mfg.stockBounds.maxY - mfg.stockBounds.minY;
         info.push(`- 胚料尺寸：${sw.toFixed(1)} × ${sh.toFixed(1)} × ${mfg.thickness.toFixed(1)} mm`);
-    }
-    if (mfg.faceEnable && Number.isFinite(mfg.surfaceCleanDepth) && mfg.surfaceCleanDepth > 0) {
-        const patternName = mfg.facePattern === 'spiral' ? '環繞（外→內）' : '往復（Zigzag）';
-        const cornerNames = { bl: '胚料左下角', br: '胚料右下角', tl: '胚料左上角', tr: '胚料右上角', center: '胚料中心' };
-        const cornerName = cornerNames[mfg.faceOriginCorner] || cornerNames.bl;
-        const perPass = Number.isFinite(mfg.faceStepdown) && mfg.faceStepdown > 0 ? mfg.faceStepdown : mfg.surfaceCleanDepth;
-        const isBottomRef = mfg.faceOriginZ === 'bottom';
-        info.push(`- 胚料表面清掃：${isBottomRef ? '預留量' : '總深度'} ${mfg.surfaceCleanDepth.toFixed(2)} mm，每層下切 ${perPass.toFixed(2)} mm，${patternName}，重疊 ${Number(mfg.faceOverlapPct || 40).toFixed(0)}% 刀徑`);
-        if (isBottomRef) {
-            // 底面模式下 mfg.thickness 已是粗胚厚度（成品高 + 預留量）
-            const finalHeight = mfg.thickness - mfg.surfaceCleanDepth;
-            info.push(`- 對刀定位點：${cornerName}・底面（床台 X0 Y0 Z0），清掃從 Z${mfg.thickness.toFixed(2)} 掃到 Z${finalHeight.toFixed(2)}，成品工件高 = ${finalHeight.toFixed(2)} mm`);
-        } else {
-            info.push(`- 對刀定位點：${cornerName}・頂面（X0 Y0 Z0），清掃後頂面 Z${(stockTopZ - mfg.surfaceCleanDepth).toFixed(2)}`);
-        }
     }
     info.push(`- 每層下刀：${mfg.stepdown.toFixed(2)} mm`);
     info.push(`- 切割層數：${layers}`);
