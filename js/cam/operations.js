@@ -111,8 +111,16 @@ export function drillOps({ holes, safeZ, drillZ, feedZ, topZ = 0, peckStep = 0 }
  *  - 'zigzag': raster back and forth. Entry/exit beyond the stock edge so
  *    plunges happen in air; first/last scanlines sit on the stock edge so
  *    the cutter overhangs by one radius and edges are fully cleaned.
+ *    Alternating direction means alternating climb/conventional cuts, which
+ *    leaves visible directional banding on the surface.
  *  - 'spiral': rectangular rings from the outside in; the outer ring rides
  *    the stock edge (cutter overhangs by one radius).
+ *  - 'oneway': every scanline cuts in the same direction, so every pass is a
+ *    climb cut and the finish is uniform. The return leg is a rapid, marked
+ *    with `rapid: true` on the point, which faceStockOps turns into a
+ *    retract/reposition/plunge instead of a G1.
+ *
+ * Points are {x, y} plus an optional `rapid` flag (oneway only).
  *
  * startCorner ('bl'|'br'|'tl'|'tr') = 對刀定位點, the pass starts nearest
  * to where the operator parked the tool.
@@ -159,7 +167,7 @@ export function buildFacePattern({
         return pts;
     }
 
-    // zigzag raster
+    // raster scanlines, shared by zigzag and oneway
     const lead = r + 1; // start/end beyond the stock edge
     const yLines = [];
     if (fromBottom) {
@@ -171,6 +179,28 @@ export function buildFacePattern({
         while (yc > y0 + 1e-6) { yLines.push(yc); yc -= step; }
         yLines.push(y0);
     }
+
+    if (pattern === 'oneway') {
+        // Climb milling ties the cut direction to the spindle rotation and the
+        // step-over direction. With M3 (clockwise seen from above) the tooth's
+        // tangential velocity on the +Y side of the cutter points along +X, so
+        // stepping +Y must cut +X (and stepping −Y must cut −X) for the tooth
+        // to move with the feed where it meets uncut stock — that is climb.
+        // Cut direction therefore follows fromBottom, not fromLeft; startCorner
+        // only chooses which edge we start stepping from.
+        const cutPositiveX = fromBottom;
+        const xFrom = cutPositiveX ? x0 - lead : x1 + lead;
+        const xTo = cutPositiveX ? x1 + lead : x0 - lead;
+        yLines.forEach((yy, i) => {
+            // i === 0 is the initial approach, which faceStockOps already
+            // rapids to before plunging; only later scanlines need a retract.
+            pts.push({ x: xFrom, y: yy, rapid: i > 0 });
+            pts.push({ x: xTo, y: yy });
+        });
+        return pts;
+    }
+
+    // zigzag raster
     const xNear = fromLeft ? x0 - lead : x1 + lead;
     const xFar = fromLeft ? x1 + lead : x0 - lead;
 
@@ -188,9 +218,36 @@ export function buildFacePattern({
 }
 
 /**
+ * Facing-only Z levels, distributed evenly.
+ *
+ * buildZLevels() cuts a full stepdown every layer and dumps the remainder on
+ * the last one, so a 2.0 mm sweep at 1.89 mm/layer ends with a 0.11 mm pass.
+ * A sliver that thin rubs rather than cuts: the finish gets worse, not better,
+ * and the edge dulls faster. Spreading the depth evenly keeps every layer at
+ * or below the requested stepdown while never leaving a sliver (2.0 mm over
+ * two layers becomes 1.0 + 1.0).
+ *
+ * Part toolpaths deliberately keep using buildZLevels() — unchanged behaviour.
+ */
+function buildEvenFaceZLevels(startZ, depth, maxStep) {
+    const total = Math.abs(depth);
+    if (total <= 1e-9) return [];
+    const step = Number.isFinite(maxStep) && maxStep > 1e-6 ? maxStep : total;
+    const n = Math.max(1, Math.ceil(total / step));
+    const even = total / n;
+    const levels = [];
+    for (let i = 1; i <= n; i++) {
+        levels.push(startZ - Math.min(i * even, total));
+    }
+    return levels;
+}
+
+/**
  * Face milling (surface clearing) of the stock top.
- * Follows buildFacePattern() at each Z level, stepping down by
- * faceStepdown per pass until -faceDepth.
+ *
+ * Roughs down to (faceDepth − finishAllow) in even layers of at most
+ * faceStepdown, then takes a single finishing pass at full faceDepth with
+ * finishFeed. finishAllow = 0 disables the finishing pass.
  */
 export function faceStockOps({
     x0, y0, x1, y1,
@@ -203,7 +260,9 @@ export function faceStockOps({
     feedZ,
     topZ = 0,
     pattern = 'zigzag',
-    startCorner = 'bl'
+    startCorner = 'bl',
+    finishAllow = 0,
+    finishFeed = 0
 }) {
     const lines = [];
     if (!(faceDepth > 0) || !(x1 > x0) || !(y1 > y0) || !(toolD > 0)) return lines;
@@ -211,22 +270,45 @@ export function faceStockOps({
     const path = buildFacePattern({ x0, y0, x1, y1, toolD, overlapPct, pattern, startCorner });
     if (path.length < 2) return lines;
 
-    lines.push("(FACE STOCK TOP)");
-
-    const perPass = Number.isFinite(faceStepdown) && faceStepdown > 0
-        ? faceStepdown
-        : Math.abs(faceDepth);
     const startZ = Number.isFinite(topZ) ? topZ : 0;
-    const zLevels = buildZLevels(startZ, startZ - Math.abs(faceDepth), perPass);
+    const totalDepth = Math.abs(faceDepth);
+    // A finish allowance at or beyond the total sweep leaves nothing to rough:
+    // fall back to a single finishing pass at full depth rather than cutting air.
+    const allow = Number.isFinite(finishAllow) && finishAllow > 0
+        ? Math.min(finishAllow, totalDepth)
+        : 0;
+    const roughDepth = totalDepth - allow;
+    const perPass = Number.isFinite(faceStepdown) && faceStepdown > 0 ? faceStepdown : totalDepth;
 
-    for (const z of zLevels) {
+    const emitPass = (z, cutFeed) => {
         lines.push(`G0 Z${fmt(safeZ)}`);
         lines.push(`G0 X${fmt(path[0].x)} Y${fmt(path[0].y)}`);
         lines.push(`G1 Z${fmt(z)} F${fmt(feedZ)}`);
         for (let i = 1; i < path.length; i++) {
-            lines.push(`G1 X${fmt(path[i].x)} Y${fmt(path[i].y)} F${fmt(feedXY)}`);
+            const p = path[i];
+            if (p.rapid) {
+                // one-way return leg: the next scanline is still uncut stock, so
+                // clear it entirely instead of dragging the cutter back through it
+                lines.push(`G0 Z${fmt(safeZ)}`);
+                lines.push(`G0 X${fmt(p.x)} Y${fmt(p.y)}`);
+                lines.push(`G1 Z${fmt(z)} F${fmt(feedZ)}`);
+            } else {
+                lines.push(`G1 X${fmt(p.x)} Y${fmt(p.y)} F${fmt(cutFeed)}`);
+            }
         }
         lines.push(`G0 Z${fmt(safeZ)}`);
+    };
+
+    lines.push("(FACE STOCK TOP)");
+    if (roughDepth > 1e-9) {
+        lines.push("(FACE ROUGHING)");
+        for (const z of buildEvenFaceZLevels(startZ, roughDepth, perPass)) {
+            emitPass(z, feedXY);
+        }
+    }
+    if (allow > 1e-9) {
+        lines.push(`(FACE FINISH PASS, ALLOWANCE ${fmt(allow)} MM)`);
+        emitPass(startZ - totalDepth, finishFeed > 0 ? finishFeed : feedXY);
     }
 
     return lines;

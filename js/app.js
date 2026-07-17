@@ -55,7 +55,9 @@ const MATERIAL_PRESETS = {
             faceOverlapPct: 30,
             faceFeedXY: 1200,
             faceFeedZ: 400,
-            faceSpindle: 12000
+            faceSpindle: 12000,
+            faceFinishAllow: 0.2,
+            faceFinishFeed: 800
         },
         limits: {
             stepdown: [0.3, 6.0],
@@ -64,7 +66,8 @@ const MATERIAL_PRESETS = {
             surfaceCleanDepth: [0.05, 1.0],
             faceStepdown: [0.2, 3.0],
             faceFeedXY: [400, 3000],
-            faceFeedZ: [100, 900]
+            faceFeedZ: [100, 900],
+            faceFinishFeed: [300, 2000]
         }
     },
     plastic: {
@@ -83,7 +86,9 @@ const MATERIAL_PRESETS = {
             faceOverlapPct: 55,
             faceFeedXY: 800,
             faceFeedZ: 220,
-            faceSpindle: 8000
+            faceSpindle: 8000,
+            faceFinishAllow: 0.15,
+            faceFinishFeed: 500
         },
         limits: {
             stepdown: [0.15, 3.0],
@@ -93,7 +98,8 @@ const MATERIAL_PRESETS = {
             surfaceCleanDepth: [0.03, 0.6],
             faceStepdown: [0.15, 2.0],
             faceFeedXY: [250, 1600],
-            faceFeedZ: [80, 500]
+            faceFeedZ: [80, 500],
+            faceFinishFeed: [200, 1200]
         }
     },
     aluminum: {
@@ -112,7 +118,9 @@ const MATERIAL_PRESETS = {
             faceOverlapPct: 65,
             faceFeedXY: 400,
             faceFeedZ: 100,
-            faceSpindle: 10000
+            faceSpindle: 10000,
+            faceFinishAllow: 0.1,
+            faceFinishFeed: 250
         },
         limits: {
             stepdown: [0.05, 2.0],
@@ -122,14 +130,16 @@ const MATERIAL_PRESETS = {
             surfaceCleanDepth: [0.02, 0.35],
             faceStepdown: [0.05, 1.0],
             faceFeedXY: [120, 1000],
-            faceFeedZ: [40, 300]
+            faceFeedZ: [40, 300],
+            faceFinishFeed: [80, 700]
         }
     }
 };
 // 清掃是獨立工序，用自己的刀具直徑換算；零件欄位仍依零件刀徑換算。
 const PART_TOOL_SCALED_FIELDS = ['stepdown', 'feedXY', 'feedZ', 'peckStep'];
-const FACE_TOOL_SCALED_FIELDS = ['surfaceCleanDepth', 'faceStepdown', 'faceFeedXY', 'faceFeedZ'];
-const ROUNDED_FEED_FIELDS = ['feedXY', 'feedZ', 'faceFeedXY', 'faceFeedZ'];
+// faceFinishAllow 不隨刀徑換算：精修餘量取決於要的表面品質，不是刀具大小。
+const FACE_TOOL_SCALED_FIELDS = ['surfaceCleanDepth', 'faceStepdown', 'faceFeedXY', 'faceFeedZ', 'faceFinishFeed'];
+const ROUNDED_FEED_FIELDS = ['feedXY', 'feedZ', 'faceFeedXY', 'faceFeedZ', 'faceFinishFeed'];
 
 function clamp(value, min, max) {
     return Math.min(Math.max(value, min), max);
@@ -202,6 +212,8 @@ const DEFAULT_SETTINGS = {
     faceFeedXY: DEFAULT_MATERIAL_VALUES.faceFeedXY,
     faceFeedZ: DEFAULT_MATERIAL_VALUES.faceFeedZ,
     faceSpindle: DEFAULT_MATERIAL_VALUES.faceSpindle,
+    faceFinishAllow: DEFAULT_MATERIAL_VALUES.faceFinishAllow,
+    faceFinishFeed: DEFAULT_MATERIAL_VALUES.faceFinishFeed,
     facePattern: 'zigzag',
     faceOrigin: 'bl-top',
     faceEnable: false,
@@ -1057,6 +1069,8 @@ function applySettingsToUi(settings = {}) {
         'faceFeedXY',
         'faceFeedZ',
         'faceSpindle',
+        'faceFinishAllow',
+        'faceFinishFeed',
         'facePattern',
         'faceOrigin',
         'arrayCountX',
@@ -1073,6 +1087,12 @@ function applySettingsToUi(settings = {}) {
         const el = document.getElementById(id);
         if (el) el.value = settings[id];
     });
+
+    // 「胚料材質」是 materialType 的鏡射控制項，本身不被持久化，所以還原設定
+    // 與「恢復預設值」之後都要重新帶值，否則會停在前一個材料上。
+    const faceMaterialMirror = document.getElementById('faceMaterialType');
+    const materialMain = document.getElementById('materialType');
+    if (faceMaterialMirror && materialMain) faceMaterialMirror.value = materialMain.value;
 
     const checkboxFields = [
         'rampEnable',
@@ -1193,6 +1213,8 @@ function getMfgData() {
         faceFeedXY: readNum('faceFeedXY', 1200),
         faceFeedZ: readNum('faceFeedZ', 400),
         faceSpindle: readNum('faceSpindle', 12000),
+        faceFinishAllow: readNum('faceFinishAllow', 0),
+        faceFinishFeed: readNum('faceFinishFeed', 800),
         facePattern: document.getElementById('facePattern')?.value || 'zigzag',
         faceOrigin: document.getElementById('faceOrigin')?.value || 'bl',
 
@@ -2144,7 +2166,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // 清掃/胚料參數變更 → 2D 疊加層與 3D 刀路即時更新
-    const facePreviewInputIds = ['stockW', 'stockH', 'stockT', 'surfaceCleanDepth', 'faceStepdown', 'faceOverlapPct', 'facePattern', 'faceOrigin', 'faceToolD'];
+    const facePreviewInputIds = ['stockW', 'stockH', 'stockT', 'surfaceCleanDepth', 'faceStepdown', 'faceOverlapPct', 'facePattern', 'faceOrigin', 'faceToolD', 'faceFinishAllow', 'faceFinishFeed'];
     facePreviewInputIds.forEach((id) => {
         document.getElementById(id)?.addEventListener('change', () => {
             if (faceEnableCb?.checked) {
@@ -2180,11 +2202,37 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
+    // 「加工材料」住在預設收合的「CAM 加工參數」面板裡，但它驅動清掃的下切量、
+    // 進給、轉速與精修餘量 —— 清掃操作者從頭到尾看不到它，卻會拿上次存的材料
+    // （或首次的木材）去銑鋁。Stock 面板鏡射一個下拉，讓材料在被使用的地方就
+    // 看得見。兩者綁同一個值，materialType 仍是唯一真實來源（getMfgData 只讀它，
+    // 鏡射欄位不會被單獨存起來）。
     const materialTypeEl = document.getElementById('materialType');
+    const faceMaterialEl = document.getElementById('faceMaterialType');
+    const syncMaterialMirror = () => {
+        if (faceMaterialEl && materialTypeEl) faceMaterialEl.value = materialTypeEl.value;
+    };
+    syncMaterialMirror();
+
     if (materialTypeEl) {
         materialTypeEl.addEventListener('change', () => {
             applyMaterialPreset(materialTypeEl.value, { announce: true });
+            syncMaterialMirror();
             syncFaceResultT();
+        });
+    }
+
+    if (faceMaterialEl && materialTypeEl) {
+        faceMaterialEl.addEventListener('change', () => {
+            // applyMaterialPreset 會把 materialType 一併寫回，不必手動先設
+            applyMaterialPreset(faceMaterialEl.value, { announce: true });
+            syncMaterialMirror();
+            syncFaceResultT();
+            persistSettings();
+            if (faceEnableCb?.checked) {
+                renderPreviewSvg();
+                refreshLivePreview();
+            }
         });
     }
 

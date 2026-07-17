@@ -342,7 +342,9 @@ export function buildAllGcodes(parts, mfg) {
             feedZ: mfg.faceFeedZ,
             topZ: stockTopZ,
             pattern: mfg.facePattern,
-            startCorner: mfg.faceOriginCorner === 'center' || !mfg.faceOriginCorner ? 'bl' : mfg.faceOriginCorner
+            startCorner: mfg.faceOriginCorner === 'center' || !mfg.faceOriginCorner ? 'bl' : mfg.faceOriginCorner,
+            finishAllow: mfg.faceFinishAllow,
+            finishFeed: mfg.faceFinishFeed
         });
         return faceLines.length > 0
             ? [{ name: 'facing.nc', text: faceLines.join("\r\n") + "\r\n" }]
@@ -370,10 +372,17 @@ export function buildAllGcodes(parts, mfg) {
 function generateFacingInfo(mfg) {
     const cornerNames = { bl: '胚料左下角', br: '胚料右下角', tl: '胚料左上角', tr: '胚料右上角', center: '胚料中心' };
     const cornerName = cornerNames[mfg.faceOriginCorner] || cornerNames.bl;
-    const patternName = mfg.facePattern === 'spiral' ? '環繞（外→內）' : '往復（Zigzag）';
+    const patternNames = { spiral: '環繞（外→內）', oneway: '單向順銑（One-way）' };
+    const patternName = patternNames[mfg.facePattern] || '往復（Zigzag）';
     const depth = mfg.surfaceCleanDepth;
+    const allow = Number.isFinite(mfg.faceFinishAllow) && mfg.faceFinishAllow > 0
+        ? Math.min(mfg.faceFinishAllow, depth)
+        : 0;
+    const roughDepth = depth - allow;
     const perPass = Number.isFinite(mfg.faceStepdown) && mfg.faceStepdown > 0 ? mfg.faceStepdown : depth;
-    const layers = Math.max(1, Math.ceil(depth / Math.max(perPass, 1e-6)));
+    // 與 buildEvenFaceZLevels 同一套算法：層數決定後平均分配，不留殘料薄層
+    const layers = roughDepth > 1e-9 ? Math.max(1, Math.ceil(roughDepth / Math.max(perPass, 1e-6))) : 0;
+    const evenPerLayer = layers > 0 ? roughDepth / layers : 0;
     const stockT = Math.max(0, mfg.stockT || 0);
     const toolD = Number.isFinite(mfg.faceToolD) && mfg.faceToolD > 0 ? mfg.faceToolD : 0;
     const overlapPct = Number(mfg.faceOverlapPct || 40);
@@ -385,7 +394,13 @@ function generateFacingInfo(mfg) {
     info.push('- 本程式為獨立工序，只含清掃刀路，不含任何零件加工');
     info.push(`- 加工材料：${materialName(mfg.materialType)}`);
     info.push(`- 胚料尺寸：${sw.toFixed(1)} × ${sh.toFixed(1)}${stockT > 0 ? ` × ${stockT.toFixed(2)}` : ''} mm`);
-    info.push(`- 清掃量：${depth.toFixed(2)} mm，每層下切 ${perPass.toFixed(2)} mm，共 ${layers} 層`);
+    info.push(`- 清掃量：${depth.toFixed(2)} mm`);
+    if (layers > 0) {
+        info.push(`- 粗銑：${roughDepth.toFixed(2)} mm，分 ${layers} 層平均切，每層 ${evenPerLayer.toFixed(3)} mm（下切上限 ${perPass.toFixed(2)} mm）`);
+    }
+    info.push(allow > 0
+        ? `- 精修：留 ${allow.toFixed(2)} mm 最後光一刀，進給 ${Number(mfg.faceFinishFeed || 0).toFixed(0)} mm/min`
+        : '- 精修：停用（餘量 0）');
     if (stockT > 0) {
         info.push(`- 掃完剩餘厚度：${(stockT - depth).toFixed(2)} mm`);
     }
