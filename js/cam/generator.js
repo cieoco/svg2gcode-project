@@ -45,6 +45,20 @@ function closedPathArea(points) {
     return signedPolygonArea(pts);
 }
 
+/**
+ * Which way a profile must be travelled to climb-mill it.
+ *
+ * Climb depends on the spindle: with M3 (clockwise seen from above) the teeth
+ * meet uncut stock moving with the feed when an outside profile is travelled
+ * clockwise and an inside one counter-clockwise. M4 reverses the teeth, so both
+ * flip. Callers that ignore this would emit conventional milling on a CCW
+ * spindle while still calling it climb.
+ */
+function climbWantsCw(mode, mfg) {
+    const spindleCW = mfg.spindleDir !== 'ccw';
+    return spindleCW ? mode === 'outside' : mode === 'inside';
+}
+
 function orientForMaterial(geom, mode, mfg) {
     if (mfg.materialType !== 'aluminum') return geom;
     if (mode !== 'outside' && mode !== 'inside') return geom;
@@ -53,9 +67,7 @@ function orientForMaterial(geom, mode, mfg) {
     const area = closedPathArea(geom.points);
     if (Math.abs(area) < 1e-6) return geom;
 
-    // For a clockwise spindle, common climb-milling defaults are:
-    // outside profiles clockwise, inside profiles counter-clockwise.
-    const wantsCcw = mode === 'inside';
+    const wantsCcw = !climbWantsCw(mode, mfg);
     const isCcw = area > 0;
     return isCcw === wantsCcw ? geom : reverseClosedGeom(geom);
 }
@@ -207,7 +219,7 @@ export function buildPartGcode(part, mfg) {
                 cx, cy,
                 diameter: part.diameter,
                 safeZ, topZ, cutDepth, stepdown, feedXY, feedZ,
-                clockwise: mfg.materialType === 'aluminum' && mode === 'outside'
+                clockwise: mfg.materialType === 'aluminum' && climbWantsCw(mode, mfg)
             })
         );
     } else if (part.barStyle === 'rounded') {
@@ -472,7 +484,7 @@ export function generateMachiningInfo(mfg, partCount, layout = {}) {
     info.push(`- 孔加工：${mfg.holeMode === "mill" ? "銑內徑" : "鑽中心點"}`);
     info.push(`- 後處理器：${mfg.postProcessor === "mach3" ? "MACH3" : "GRBL"}`);
     if (Number.isFinite(mfg.spindle) && mfg.spindle > 0) {
-        info.push(`- 主軸轉速：${mfg.spindle.toFixed(0)} RPM`);
+        info.push(`- 主軸轉速：${mfg.spindle.toFixed(0)} RPM，${mfg.spindleDir === 'ccw' ? '逆時針 M4' : '順時針 M3'}`);
     }
     if (Number.isFinite(mfg.tabThickness) && mfg.tabThickness > 0 && Number.isFinite(mfg.tabWidth) && mfg.tabWidth > 0 && Number.isFinite(mfg.tabCount) && mfg.tabCount > 0) {
         info.push(`- 固定支撐橋 (Tabs): 厚度 ${mfg.tabThickness.toFixed(2)} mm, 寬度 ${mfg.tabWidth.toFixed(2)} mm, 數量 ${Math.round(mfg.tabCount)}`);

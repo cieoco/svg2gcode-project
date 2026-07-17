@@ -271,6 +271,13 @@
                         <label class="kv-label" for="spindle">主軸轉速 (RPM)</label>
                         <input class="kv-field" type="number" id="spindle" value="12000" step="1000">
                     </div>
+                    <div class="kv-row" data-advanced>
+                        <label class="kv-label" for="spindleDir">主軸轉向</label>
+                        <select class="kv-field" id="spindleDir" title="決定輸出 M3 或 M4。鋁材的順銑繞行方向會跟著轉向翻轉（外形/內形相反）。一般右旋銑刀用順時針 M3">
+                            <option value="cw" selected>順時針 (M3)</option>
+                            <option value="ccw">逆時針 (M4)</option>
+                        </select>
+                    </div>
                     <div class="kv-row">
                         <label class="kv-label" for="toolD">刀具直徑 (mm)</label>
                         <input class="kv-field" type="number" id="toolD" value="3.175" step="0.001">
