@@ -59,13 +59,18 @@ export function gcodeFooter({ safeZ, spindle, postProcessor, coolantEnable }) {
  */
 export function buildZLevels(topZ, cutZ, stepdown) {
     const levels = [];
-    const startZ = Number.isFinite(topZ) ? topZ : 0;
-    const endZ = Number.isFinite(cutZ) ? cutZ : 0;
+    if (!Number.isFinite(topZ) || !Number.isFinite(cutZ)) {
+        throw new Error('Z 座標必須是有限數值。');
+    }
+    if (!Number.isFinite(stepdown) || stepdown <= 0) {
+        throw new Error('每層下刀必須是有限且大於 0 的數值。');
+    }
+    const startZ = topZ;
+    const endZ = cutZ;
     const total = Math.abs(endZ - startZ);
     if (total <= 1e-9) return levels;
 
-    const rawStepdown = Math.abs(stepdown);
-    const sd = Number.isFinite(rawStepdown) && rawStepdown > 1e-6 ? rawStepdown : total;
+    const sd = stepdown;
     const dir = endZ >= startZ ? 1 : -1;
     const n = Math.max(1, Math.ceil(total / sd));
     for (let i = 1; i <= n; i++) {
@@ -275,6 +280,10 @@ export function faceStockOps({
     spindleCW = true
 }) {
     const lines = [];
+    if (Number.isFinite(faceDepth) && faceDepth > 0
+        && (!Number.isFinite(faceStepdown) || faceStepdown <= 0)) {
+        throw new Error('清掃每層下刀必須是有限且大於 0 的數值。');
+    }
     if (!(faceDepth > 0) || !(x1 > x0) || !(y1 > y0) || !(toolD > 0)) return lines;
 
     const path = buildFacePattern({ x0, y0, x1, y1, toolD, overlapPct, pattern, startCorner, spindleCW });
@@ -288,7 +297,7 @@ export function faceStockOps({
         ? Math.min(finishAllow, totalDepth)
         : 0;
     const roughDepth = totalDepth - allow;
-    const perPass = Number.isFinite(faceStepdown) && faceStepdown > 0 ? faceStepdown : totalDepth;
+    const perPass = faceStepdown;
 
     const emitPass = (z, cutFeed) => {
         lines.push(`G0 Z${fmt(safeZ)}`);

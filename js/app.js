@@ -5,6 +5,8 @@
 import { parseSVG } from './svg-parser.js';
 import { parseDXF } from './dxf-parser.js';
 import { buildAllGcodes, generateMachiningInfo } from './cam/generator.js';
+import { validateMachiningInputs } from './cam/validation.js';
+import { getProgramOriginContext } from './cam/program-context.js';
 import { gcodeHeader, gcodeFooter, buildFacePattern } from './cam/operations.js';
 import { init3DViewer, update3DToolpath, linkAnimationUI, reset3DView } from './viewer3d.js';
 import { buildHanziParts } from './text/hanzi-text.js';
@@ -1042,7 +1044,13 @@ function setupSvgInteractions(parts) {
 // Helper: Save current settings to localStorage
 function saveMfgData(mfg) {
     try {
-        localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(mfg));
+        const previous = JSON.parse(localStorage.getItem(SETTINGS_STORAGE_KEY) || '{}');
+        const persistable = { ...previous };
+        for (const [key, value] of Object.entries(mfg)) {
+            if (typeof value === 'number' && !Number.isFinite(value)) continue;
+            persistable[key] = value;
+        }
+        localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(persistable));
     } catch (e) {
         console.warn('Could not save settings to localStorage', e);
     }
@@ -1181,8 +1189,10 @@ function getMfgData() {
     const readNum = (id, fallback) => {
         const el = document.getElementById(id);
         if (!el) return fallback;
-        const v = parseFloat(el.value);
-        return Number.isFinite(v) ? v : fallback;
+        const raw = String(el.value ?? '').trim();
+        if (!raw) return NaN;
+        const v = Number(raw);
+        return Number.isFinite(v) ? v : NaN;
     };
     const readBool = (id) => document.getElementById(id)?.checked || false;
 
@@ -1593,16 +1603,50 @@ function buildProgram() {
     //  - 底面對刀（翻面後取平行面）：Z0 = 床台，胚料頂面在 +胚料厚度 Z，
     //    掃 胚料厚度 → 胚料厚度 − 清掃量。
     // 程式無從得知這是第一刀還是第二刀，由操作者用定位點自行決定。
-    const faceDepth = Math.max(0, mfg.surfaceCleanDepth || 0);
-    const faceStockT = Math.max(0, mfg.stockT || 0);
+    const faceDepth = mfg.surfaceCleanDepth;
+    const faceStockT = mfg.stockT;
 
     const faceActive = Boolean(effectiveMfg.faceEnable)
         && faceDepth > 0
         && Boolean(effectiveMfg.stockBounds);
+
+    const validationMfg = {
+        ...effectiveMfg,
+        thickness: mfg.faceEnable && faceDepth > 0 ? (faceStockT > 0 ? faceStockT : faceDepth) : mfg.thickness,
+        surfaceCleanDepth: faceDepth,
+        faceEnable: Boolean(mfg.faceEnable) && faceDepth > 0,
+        faceOriginZ: faceOriginParsed.zref,
+        stockTopZ: 0
+    };
+    const validation = validateMachiningInputs(partsToProcess, validationMfg);
+    if ((!faceActive && activeParts.length > 0)
+        && (!Number.isFinite(mfg.thickness) || mfg.thickness <= 0)) {
+        validation.errors.push('原始材料厚度必須是有限且大於 0 的數值。');
+    }
+    if (mfg.faceEnable && (!Number.isFinite(mfg.surfaceCleanDepth) || mfg.surfaceCleanDepth < 0)) {
+        validation.errors.push('清掃深度必須是有限且大於或等於 0 的數值。');
+    }
+    if (mfg.faceEnable && (!Number.isFinite(mfg.stockT) || mfg.stockT < 0)) {
+        validation.errors.push('清掃的胚料厚度必須是有限數值；填 0 可使用手動清掃深度。');
+    }
+    if (mfg.faceEnable && faceDepth > 0
+        && (!Number.isFinite(mfg.stockW) || !Number.isFinite(mfg.stockH))) {
+        validation.errors.push('清掃胚料長寬必須是有限數值；填 0 可依圖形範圍自動設定。');
+    }
+    if (mfg.faceEnable && faceDepth > 0
+        && (!Number.isFinite(mfg.faceStepdown) || mfg.faceStepdown <= 0)) {
+        validation.errors.push('清掃每層下刀必須是有限且大於 0 的數值。');
+    }
+    if (validation.errors.length > 0) {
+        return { blocked: true, errors: [...new Set(validation.errors)] };
+    }
     if (activeParts.length === 0 && !faceActive) {
         return { blocked: true };
     }
 
+    // Keep zero-depth facing inactive in the generator while retaining its datum.
+    effectiveMfg.faceEnable = faceActive;
+    effectiveMfg.surfaceCleanDepth = faceActive ? faceDepth : 0;
     if (faceActive) {
         // 清掃是獨立工序：改用自己的刀具與切削參數，不碰零件加工的設定。
         // thickness 在此僅代表胚料實體厚度（STOCK 註解與 3D 胚料框用）。
@@ -1614,7 +1658,7 @@ function buildProgram() {
 
     // 以下兩種設定必然讓刀具切進床台，不是「提醒一下」的等級 —— 安全警告是
     // 檔案下載後才顯示的，撞機程式那時已經到操作者手上，所以直接擋掉不生成。
-    if (faceActive && faceOriginParsed.zref === 'bottom' && faceStockT <= 0) {
+    if (mfg.faceEnable && faceOriginParsed.zref === 'bottom' && faceStockT <= 0) {
         return {
             blocked: true,
             blockedReason: '底面對刀需要「胚料厚度 Z」當 Z 基準（刀具從床台算起的胚料頂面高度）。\n目前是 0（未量測），程式會從床台面往下切，直接撞床台。\n\n請量測翻面後的胚料厚度並填入「胚料厚度 Z」。'
@@ -1639,10 +1683,18 @@ function buildProgram() {
     }
 
     const files = buildAllGcodes(partsToProcess, effectiveMfg);
-    const info = generateMachiningInfo(effectiveMfg, partsToProcess.length, layout);
+    let info = generateMachiningInfo(effectiveMfg, partsToProcess.length, layout);
     if (files.length === 0) return { blocked: true };
 
     const stockT = effectiveMfg.thickness || 0;
+    const originContext = getProgramOriginContext({
+        faceEnable: mfg.faceEnable,
+        faceOrigin: mfg.faceOrigin,
+        faceDepth,
+        stockBounds: effectiveMfg.stockBounds,
+        thickness: mfg.faceEnable ? (faceStockT > 0 ? faceStockT : effectiveMfg.thickness) : effectiveMfg.thickness,
+        originMode: effectiveMfg.originMode
+    });
 
     const mergedLines = [];
     // Use strict ASCII uppercase and avoid local date strings which might contain Chinese characters
@@ -1667,16 +1719,16 @@ function buildProgram() {
     let offsetX = 0, offsetY = 0, offsetZ = 0;
     let originLabel = effectiveMfg.originMode;
 
-    if (faceActive && effectiveMfg.stockBounds) {
+    if (originContext.useFaceDatum && effectiveMfg.stockBounds) {
         // 啟用清掃時：程式原點 = 刀具定位點（胚料上的對刀點），
         // 工件原點下拉此時不生效。Z 基準只依胚料厚度，與材料厚度無關。
         //  - 頂面對刀：Z0 = 胚料頂面，掃 0 → −清掃量。
         //  - 底面對刀：Z0 = 床台，胚料頂面在 +胚料厚度 Z。
         const sb = effectiveMfg.stockBounds;
-        const { corner, zref } = faceOriginParsed;
+        const { corner, zref } = originContext;
         offsetX = -(corner === 'br' || corner === 'tr' ? sb.maxX : corner === 'center' ? (sb.minX + sb.maxX) / 2 : sb.minX);
         offsetY = -(corner === 'tl' || corner === 'tr' ? sb.maxY : corner === 'center' ? (sb.minY + sb.maxY) / 2 : sb.minY);
-        offsetZ = zref === 'bottom' ? faceStockT : 0;
+        offsetZ = originContext.offsetZ;
         const remainT = faceStockT > 0 ? (faceStockT - faceDepth) : null;
         const remainNote = remainT === null ? '' : `，掃完剩 ${remainT.toFixed(2)} mm`;
         originLabel = zref === 'bottom'
@@ -1691,7 +1743,7 @@ function buildProgram() {
         offsetX = mode.includes('center') ? -cx : -extents.minX;
         offsetY = mode.includes('center') ? -cy : -extents.minY;
         // Z: bottom shifts so Z0 = bottom face of material
-        offsetZ = mode.startsWith('bottom') ? effectiveMfg.thickness : 0;
+        offsetZ = originContext.offsetZ;
 
         const originLabels = {
             'top-center': '頂面中心',
@@ -1722,7 +1774,7 @@ function buildProgram() {
             }
         }
         : { ...effectiveMfg };
-    if (faceActive) {
+    if (originContext.useFaceDatum) {
         // 3D 胚料框依對刀 Z 基準擺放：頂面對刀時框在 Z0 之下（清掃面在框
         // 頂），底面對刀時框在 Z0 之上。厚度即胚料厚度 Z。
         viewerMfg.originMode = faceOriginParsed.zref === 'bottom' ? 'bottom-face' : 'top-face';
@@ -1747,6 +1799,11 @@ generateBtn.addEventListener('click', () => {
         const program = buildProgram();
         if (!program) return;
         if (program.blocked) {
+            update3DToolpath('', { safeZ: 5 });
+            if (program.errors?.length) {
+                log(`加工參數有誤，未生成 G-Code：\n${program.errors.map((error) => `- ${error}`).join('\n')}`);
+                return;
+            }
             log(program.blockedReason
                 || '尚未指定任何刀路，無法生成 G-Code。\n請先在左側 2D 視圖：\n1. 點選上方的刀路模式（例如「銑線外」）\n2. 再點擊圖形中的線條，把刀路套用到該線段\n（或在「胚料與表面清掃」啟用清掃並填好胚料長寬）');
             return;
@@ -1800,8 +1857,12 @@ function refreshLivePreview() {
             const program = buildProgram();
             if (program && !program.blocked) {
                 update3DToolpath(program.txt, program.viewerMfg);
+            } else if (program?.blocked) {
+                update3DToolpath('', { safeZ: 5 });
+                if (program.errors?.length) console.warn('3D 即時預覽參數錯誤', program.errors);
             }
         } catch (err) {
+            update3DToolpath('', { safeZ: 5 });
             console.warn('3D 即時預覽更新失敗', err);
         }
     }, 250);

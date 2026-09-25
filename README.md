@@ -53,6 +53,20 @@ npx http-server -p 8080 -c-1
 
 然後在瀏覽器開啟 `http://localhost:8080`，或直接以瀏覽器開啟 `index.html`。
 
+### 開發與驗證
+
+```bash
+npm install
+npm test
+npx http-server -p 8080 -c-1
+```
+
+測試使用 jsdom 30.1.1；Node.js 需符合其版本條件：`^22.22.2 || ^24.15.0 || >=26.0.0`。
+
+SVG 有 `viewBox` 時，根元素需提供至少一項實體 `width` 或 `height`，另一項會依比例推算；沒有 `viewBox` 時，幾何座標按 CSS px 換算（96 px = 25.4 mm）。巢狀群組與元素的 SVG transform 會套用到路徑；同一個 `path` 的各子路徑會分別產生刀路，不會以切削線連接。此工具不是完整 SVG renderer，不支援文字排版、`use`/`symbol`、裁切/遮罩及筆畫外擴等功能。無效的加工參數會阻擋 G-code 生成與下載。
+
+完整支援範圍與正確性規格見 [docs/sdd-cam-correctness.md](docs/sdd-cam-correctness.md)。
+
 ### 使用步驟
 
 1. **拖曳或點擊上傳** SVG 或 DXF 檔案

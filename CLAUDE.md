@@ -6,10 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 npm install                  # Install dev dependencies
+npm test                     # Run parser and CAM regression tests
 npx http-server -p 8080 -c-1 # Serve locally at http://localhost:8080
 ```
 
-No build step, no bundler, no transpilation — ES6 modules are served directly to the browser. There is no test suite and no linter configured.
+No build step, no bundler, no transpilation — ES6 modules are served directly to the browser. Tests use Node's built-in test runner and jsdom; no linter is configured.
 
 Deployment is automatic via GitHub Actions (`.github/workflows/deploy.yml`) on push to `master`, targeting GitHub Pages.
 
@@ -38,6 +39,8 @@ js/dxf-parser.js    → DXF → parts
 js/cam/
   generator.js      → part iteration, dialect formatting
   operations.js     → G-Code line builders, offset, tabs, layers
+  validation.js     → shared machining-input validation before G-code generation
+  program-context.js → stock datum and origin-offset context for generated programs
   path-optimizer.js → Douglas-Peucker, arc fitting, merge
 js/viewer3d.js      → Three.js preview + animation
 js/utils.js         → fmt() number formatter (single export)
@@ -50,4 +53,5 @@ css/style.css       → CSS variables for dark/light theme, layout grid
 - **`utils.js` `fmt(n)`** — all numeric output in G-Code must go through this formatter to control decimal precision.
 - **Parts representation** — parsers produce arrays of shape objects. Each shape carries path data and is later annotated with user-selected toolpath mode. Operations in `operations.js` consume this representation.
 - **Dialect switching** — GRBL vs Mach3 output differences are handled in `generator.js` based on a `dialect` parameter; avoid scattering dialect checks into `operations.js`.
+- **CAM validation and origin context** — `validation.js` is pure and shared by the UI and generator; `program-context.js` resolves the selected stock datum independently from whether a facing pass emits motion.
 - **CSS theming** — dark/light mode is toggled by swapping a class on `<body>`; all colors are CSS variables in `style.css`, never hardcoded in JS.

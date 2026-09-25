@@ -121,10 +121,20 @@ function tokenizePath(d) {
     const tokenRe = /([a-zA-Z])|([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)/g;
     const rawTokens = [];
     let m;
+    let lastIndex = 0;
     while ((m = tokenRe.exec(preprocessed)) !== null) {
+        if (!/^[\s,]*$/.test(preprocessed.slice(lastIndex, m.index))) {
+            throw new Error(`Malformed SVG path data near "${preprocessed.slice(lastIndex, m.index + 8)}".`);
+        }
         if (m[1]) rawTokens.push({ type: 'cmd', val: m[1] });
-        else rawTokens.push({ type: 'num', val: parseFloat(m[2]) });
+        else {
+            const value = Number(m[2]);
+            if (!Number.isFinite(value)) throw new Error('SVG path contains a non-finite coordinate.');
+            rawTokens.push({ type: 'num', val: value });
+        }
+        lastIndex = tokenRe.lastIndex;
     }
+    if (!/^[\s,]*$/.test(preprocessed.slice(lastIndex))) throw new Error('Malformed SVG path data.');
 
     const commands = [];
     let current = null;
@@ -214,7 +224,8 @@ function sampleCubicBezier(p0, p1, p2, p3, stepMm, svgToMm) {
         Math.hypot(p2.x - p1.x, p2.y - p1.y) +
         Math.hypot(p3.x - p2.x, p3.y - p2.y)) * svgToMm;
     const estLen = (chordLen + polyLen) / 2;
-    const numSeg = Math.max(4, Math.min(200, Math.ceil(estLen / stepMm)));
+    const numSeg = Math.max(4, Math.ceil(estLen / stepMm));
+    if (numSeg > 10000) throw new Error('SVG curve needs too many segments to meet the 0.05 mm tolerance.');
 
     const pts = [];
     for (let i = 1; i <= numSeg; i++) {
@@ -237,7 +248,8 @@ function sampleQuadBezier(p0, p1, p2, stepMm, svgToMm) {
     const polyLen = (Math.hypot(p1.x - p0.x, p1.y - p0.y) +
         Math.hypot(p2.x - p1.x, p2.y - p1.y)) * svgToMm;
     const estLen = (chordLen + polyLen) / 2;
-    const numSeg = Math.max(4, Math.min(200, Math.ceil(estLen / stepMm)));
+    const numSeg = Math.max(4, Math.ceil(estLen / stepMm));
+    if (numSeg > 10000) throw new Error('SVG curve needs too many segments to meet the 0.05 mm tolerance.');
 
     const pts = [];
     for (let i = 1; i <= numSeg; i++) {
@@ -273,30 +285,42 @@ function sampleArc(cx, cy, rx, ry, phi, startAngle, endAngle, ccw, numSeg) {
 
 
 /**
- * Parse SVG path d-attribute into a sequence of geometry moves.
- *
- * Returns an array of moves:
- *   { type: 'line', to: {x,y} }
- *   { type: 'arc', to: {x,y}, center: {x,y}, radius: number, clockwise: bool }
- *   (arcs only for circular arcs where rx ≈ ry and rotation ≈ 0)
- *
- * All coordinates are in SVG user units (caller converts to mm).
+ * Parse SVG path d-attribute into non-empty subpaths.
+ * Each subpath has { startX, startY, moves }; internal arc moves retain
+ * endpoint-parameter metadata until the accumulated affine is known.
+ * Coordinates remain in SVG user units.
  */
 function parseDAttribute(d, svgToMm) {
     const tokens = tokenizePath(d);
-    const moves = []; // result
+    const subpaths = [];
+    let moves = [];
     let curX = 0, curY = 0;
     let startX = 0, startY = 0; // subpath start for Z
     let lastCpX = 0, lastCpY = 0; // last control point for S/T
+    let lastCurveFamily = null;
     const STEP_MM = 0.5; // sampling step for curves
+
+    const flushSubpath = () => {
+        if (moves.length > 0) subpaths.push({ startX, startY, moves });
+    };
 
     for (const { cmd, args } of tokens) {
         const isRel = cmd === cmd.toLowerCase();
         const C = cmd.toUpperCase();
+        const arity = { M: 2, L: 2, H: 1, V: 1, A: 7, C: 6, S: 4, Q: 4, T: 2, Z: 0 }[C];
+        if (arity === undefined) throw new Error(`Unsupported SVG path command: ${cmd}`);
+        if ((C === 'M' && (args.length < 2 || args.length % 2 !== 0)) ||
+            (C !== 'M' && C !== 'Z' && (args.length === 0 || args.length % arity !== 0)) ||
+            (C === 'Z' && args.length !== 0)) {
+            throw new Error(`Malformed argument count for SVG path command ${cmd}.`);
+        }
 
         switch (C) {
             case 'M': {
                 // MoveTo — may have implicit LineTo after first pair
+                flushSubpath();
+                moves = [];
+                lastCurveFamily = null;
                 for (let i = 0; i < args.length; i += 2) {
                     let nx = args[i], ny = args[i + 1];
                     if (isRel && i >= 2) { nx += curX; ny += curY; }
@@ -306,12 +330,14 @@ function parseDAttribute(d, svgToMm) {
                         startX = nx; startY = ny;
                     } else {
                         moves.push({ type: 'line', to: { x: nx, y: ny } });
+                        lastCurveFamily = null;
                     }
                     curX = nx; curY = ny;
                 }
                 break;
             }
             case 'L': {
+                lastCurveFamily = null;
                 for (let i = 0; i < args.length; i += 2) {
                     let nx = args[i], ny = args[i + 1];
                     if (isRel) { nx += curX; ny += curY; }
@@ -321,6 +347,7 @@ function parseDAttribute(d, svgToMm) {
                 break;
             }
             case 'H': {
+                lastCurveFamily = null;
                 for (let i = 0; i < args.length; i++) {
                     let nx = args[i];
                     if (isRel) nx += curX;
@@ -330,6 +357,7 @@ function parseDAttribute(d, svgToMm) {
                 break;
             }
             case 'V': {
+                lastCurveFamily = null;
                 for (let i = 0; i < args.length; i++) {
                     let ny = args[i];
                     if (isRel) ny += curY;
@@ -339,50 +367,35 @@ function parseDAttribute(d, svgToMm) {
                 break;
             }
             case 'A': {
+                lastCurveFamily = null;
                 // Arc: rx ry x-rot large-arc sweep x y (7 params each)
                 for (let i = 0; i + 7 <= args.length; i += 7) {
                     let arx = args[i], ary = args[i + 1];
                     const xRot = args[i + 2] * Math.PI / 180;
                     const fA = args[i + 3];
                     const fS = args[i + 4];
+                    if ((fA !== 0 && fA !== 1) || (fS !== 0 && fS !== 1)) {
+                        throw new Error('SVG arc flags must be 0 or 1.');
+                    }
                     let nx = args[i + 5], ny = args[i + 6];
                     if (isRel) { nx += curX; ny += curY; }
 
-                    // Check if this is a circular arc (rx ≈ ry)
-                    // When rx ≈ ry, rotation doesn't matter (circle is rotationally symmetric)
-                    const isCircular = Math.abs(arx - ary) < 0.01 * Math.max(arx, ary);
-
                     const arcInfo = svgArcToCenter(curX, curY, arx, ary, xRot, fA, fS, nx, ny);
 
-                    if (arcInfo && isCircular) {
-                        // Circular arc → G2/G3
-                        const r = (arcInfo.rx + arcInfo.ry) / 2;
-                        // Direction mapping:
-                        // svgArcToCenter sets ccw=true when fS=1 (math convention: positive angle = CCW).
-                        // In SVG screen space (Y-down), math-CCW appears as visual-CW.
-                        // So ccw=true → visual CW in SVG.
-                        // We store "clockwise" in SVG visual space here;
-                        // transformMove will invert it when Y is flipped for CNC.
-                        // Result: SVG fS=1 → visual CW in SVG → clockwise=true here
-                        //       → after Y-flip: clockwise=false → G3 (CNC CCW) ✓
-                        const clockwise = arcInfo.ccw; // fS=1→ccw=true→CW in SVG visual
+                    if (arcInfo) {
+                        // Defer arc classification until the full affine and viewport
+                        // transform is known. A circle can remain circular under a
+                        // similarity transform; all other cases need curve sampling.
                         moves.push({
                             type: 'arc',
                             to: { x: nx, y: ny },
-                            center: { x: arcInfo.cx, y: arcInfo.cy },
-                            radius: r,
-                            clockwise: clockwise
+                            sourceArc: {
+                                cx: arcInfo.cx, cy: arcInfo.cy,
+                                rx: arcInfo.rx, ry: arcInfo.ry, phi: arcInfo.phi,
+                                startAngle: arcInfo.startAngle, endAngle: arcInfo.endAngle,
+                                ccw: arcInfo.ccw
+                            }
                         });
-                    } else if (arcInfo) {
-                        // Elliptical arc → sample into lines
-                        const sweep = Math.abs(arcInfo.endAngle - arcInfo.startAngle);
-                        const estLen = sweep * Math.max(arcInfo.rx, arcInfo.ry) * svgToMm;
-                        const numSeg = Math.max(8, Math.min(200, Math.ceil(estLen / STEP_MM)));
-                        const pts = sampleArc(arcInfo.cx, arcInfo.cy, arcInfo.rx, arcInfo.ry,
-                            arcInfo.phi, arcInfo.startAngle, arcInfo.endAngle, arcInfo.ccw, numSeg);
-                        for (const pt of pts) {
-                            moves.push({ type: 'line', to: { x: pt.x, y: pt.y } });
-                        }
                     } else {
                         // Degenerate arc → straight line
                         moves.push({ type: 'line', to: { x: nx, y: ny } });
@@ -411,6 +424,7 @@ function parseDAttribute(d, svgToMm) {
                         moves.push({ type: 'line', to: { x: pt.x, y: pt.y } });
                     }
                     lastCpX = cp2x; lastCpY = cp2y;
+                    lastCurveFamily = 'cubic';
                     curX = nx; curY = ny;
                 }
                 break;
@@ -419,8 +433,8 @@ function parseDAttribute(d, svgToMm) {
                 // Smooth cubic Bézier: x2 y2 x y
                 for (let i = 0; i + 3 < args.length; i += 4) {
                     // Reflect last control point
-                    const cp1x = 2 * curX - lastCpX;
-                    const cp1y = 2 * curY - lastCpY;
+                    const cp1x = lastCurveFamily === 'cubic' ? 2 * curX - lastCpX : curX;
+                    const cp1y = lastCurveFamily === 'cubic' ? 2 * curY - lastCpY : curY;
                     let cp2x = args[i], cp2y = args[i + 1];
                     let nx = args[i + 2], ny = args[i + 3];
                     if (isRel) {
@@ -436,6 +450,7 @@ function parseDAttribute(d, svgToMm) {
                         moves.push({ type: 'line', to: { x: pt.x, y: pt.y } });
                     }
                     lastCpX = cp2x; lastCpY = cp2y;
+                    lastCurveFamily = 'cubic';
                     curX = nx; curY = ny;
                 }
                 break;
@@ -457,6 +472,7 @@ function parseDAttribute(d, svgToMm) {
                         moves.push({ type: 'line', to: { x: pt.x, y: pt.y } });
                     }
                     lastCpX = cpx; lastCpY = cpy;
+                    lastCurveFamily = 'quadratic';
                     curX = nx; curY = ny;
                 }
                 break;
@@ -464,8 +480,8 @@ function parseDAttribute(d, svgToMm) {
             case 'T': {
                 // Smooth quadratic Bézier: x y
                 for (let i = 0; i + 1 < args.length; i += 2) {
-                    const cpx = 2 * curX - lastCpX;
-                    const cpy = 2 * curY - lastCpY;
+                    const cpx = lastCurveFamily === 'quadratic' ? 2 * curX - lastCpX : curX;
+                    const cpy = lastCurveFamily === 'quadratic' ? 2 * curY - lastCpY : curY;
                     let nx = args[i], ny = args[i + 1];
                     if (isRel) { nx += curX; ny += curY; }
                     const pts = sampleQuadBezier(
@@ -476,21 +492,31 @@ function parseDAttribute(d, svgToMm) {
                         moves.push({ type: 'line', to: { x: pt.x, y: pt.y } });
                     }
                     lastCpX = cpx; lastCpY = cpy;
+                    lastCurveFamily = 'quadratic';
                     curX = nx; curY = ny;
                 }
                 break;
             }
             case 'Z': {
+                lastCurveFamily = null;
                 if (Math.hypot(curX - startX, curY - startY) > 1e-6) {
                     moves.push({ type: 'line', to: { x: startX, y: startY } });
                 }
                 curX = startX; curY = startY;
+                // SVG closepath restores the current point to this subpath's
+                // start. Later drawing commands continue from that point in a
+                // new subpath, so CAM must retract before cutting them.
+                flushSubpath();
+                moves = [];
+                startX = curX;
+                startY = curY;
                 break;
             }
         }
     }
 
-    return { startX, startY, moves };
+    flushSubpath();
+    return subpaths;
 }
 
 /**
@@ -546,128 +572,208 @@ function flattenMovesToPoints(startPoint, moves, stepMm = 0.5) {
 export function parseSVG(svgText) {
     const parser = new DOMParser();
     const doc = parser.parseFromString(cleanSVG(svgText), "image/svg+xml");
-    const svgEl = doc.querySelector('svg');
-
-    if (!svgEl) {
-        throw new Error("Invalid SVG content.");
+    const svgEl = doc.documentElement;
+    if (!svgEl || svgEl.localName !== 'svg' || doc.querySelector('parsererror')) {
+        throw new Error('Invalid SVG XML: unable to parse the SVG document.');
     }
 
-    // Detect SVG viewport units and compute a scale-to-mm factor.
-    let svgToMm = 1;
-
-    const svgWidth = svgEl.getAttribute('width') || '';
-    const svgHeight = svgEl.getAttribute('height') || '';
-
-    const parseDimMm = (str) => {
-        const m = str.trim().match(/^([\d.]+)\s*(cm|mm|in|pt|px)?$/i);
-        if (!m) return null;
-        const val = parseFloat(m[1]);
-        const unit = (m[2] || 'px').toLowerCase();
-        const toMm = { mm: 1, cm: 10, in: 25.4, pt: 25.4 / 72, px: 25.4 / 96 };
-        return val * (toMm[unit] || 1);
-    };
-
-    const viewBox = svgEl.getAttribute('viewBox');
-    if (viewBox && svgWidth) {
-        const vbParts = viewBox.trim().split(/[\s,]+/).map(parseFloat);
-        const vbW = vbParts[2];
-        const physW = parseDimMm(svgWidth);
-        if (vbW && physW) {
-            svgToMm = physW / vbW;
+    const identity = () => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 });
+    const multiply = (l, r) => ({
+        a: l.a * r.a + l.c * r.b,
+        b: l.b * r.a + l.d * r.b,
+        c: l.a * r.c + l.c * r.d,
+        d: l.b * r.c + l.d * r.d,
+        e: l.a * r.e + l.c * r.f + l.e,
+        f: l.b * r.e + l.d * r.f + l.f
+    });
+    const apply = (pt, m) => ({ x: m.a * pt.x + m.c * pt.y + m.e, y: m.b * pt.x + m.d * pt.y + m.f });
+    const finiteMatrix = (m) => Object.values(m).every(Number.isFinite);
+    const numberList = (text) => {
+        const number = '[+-]?(?:\\d+\\.?\\d*|\\.\\d+)(?:[eE][+-]?\\d+)?';
+        const re = new RegExp(number, 'g');
+        const values = [];
+        let match, last = 0;
+        while ((match = re.exec(text))) {
+            const between = text.slice(last, match.index);
+            const validSeparator = values.length === 0
+                ? /^\s*$/.test(between)
+                : (between === '' ? /^[+-]/.test(match[0]) : /^\s*,\s*$/.test(between) || /^\s+$/.test(between));
+            if (!validSeparator) throw new Error('Malformed numeric arguments.');
+            values.push(Number(match[0]));
+            last = re.lastIndex;
         }
-    } else if (svgWidth) {
-        const physW = parseDimMm(svgWidth);
-        if (physW !== null) svgToMm = physW / parseFloat(svgWidth);
-    }
-
-    const shapes = ['path', 'rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon'];
-    const parts = [];
-    const elements = doc.querySelectorAll(shapes.join(','));
-    let partIdCounter = 1;
-
-    // Build a transform matrix from the element's transform attribute
+        if (!/^\s*$/.test(text.slice(last)) || values.some((v) => !Number.isFinite(v))) {
+            throw new Error('Malformed or non-finite numeric arguments.');
+        }
+        return values;
+    };
     const parseTransform = (el) => {
-        let matrix = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
-        const transformAttr = el.getAttribute('transform');
-        if (transformAttr) {
-            const matrixMatch = transformAttr.match(/matrix\s*\(\s*([^\)]+)\)/);
-            if (matrixMatch) {
-                const vals = matrixMatch[1].trim().split(/[\s,]+/).map(parseFloat);
-                if (vals.length === 6) {
-                    matrix = { a: vals[0], b: vals[1], c: vals[2], d: vals[3], e: vals[4], f: vals[5] };
+        const attr = el.getAttribute('transform');
+        if (!attr || !attr.trim()) return identity();
+        let result = identity();
+        const re = /([A-Za-z]+)\s*\(([^()]*)\)/g;
+        let match, last = 0, found = false;
+        while ((match = re.exec(attr))) {
+            if (!/^[\s,]*$/.test(attr.slice(last, match.index))) throw new Error(`Unsupported or malformed transform: ${attr}`);
+            found = true;
+            last = re.lastIndex;
+            const name = match[1];
+            const v = numberList(match[2]);
+            let next;
+            switch (name) {
+                case 'matrix':
+                    if (v.length !== 6) throw new Error('matrix() transform requires six numbers.');
+                    next = { a: v[0], b: v[1], c: v[2], d: v[3], e: v[4], f: v[5] };
+                    break;
+                case 'translate':
+                    if (v.length < 1 || v.length > 2) throw new Error('translate() transform requires one or two numbers.');
+                    next = { ...identity(), e: v[0], f: v[1] || 0 };
+                    break;
+                case 'scale':
+                    if (v.length < 1 || v.length > 2) throw new Error('scale() transform requires one or two numbers.');
+                    next = { a: v[0], b: 0, c: 0, d: v.length === 2 ? v[1] : v[0], e: 0, f: 0 };
+                    break;
+                case 'rotate': {
+                    if (v.length !== 1 && v.length !== 3) throw new Error('rotate() transform requires one number or an angle and pivot.');
+                    const rad = v[0] * Math.PI / 180, cos = Math.cos(rad), sin = Math.sin(rad);
+                    const rot = { a: cos, b: sin, c: -sin, d: cos, e: 0, f: 0 };
+                    next = v.length === 1 ? rot : multiply(multiply({ ...identity(), e: v[1], f: v[2] }, rot), { ...identity(), e: -v[1], f: -v[2] });
+                    break;
                 }
-            } else {
-                const translateMatch = transformAttr.match(/translate\s*\(\s*([^\)]+)\)/);
-                if (translateMatch) {
-                    const vals = translateMatch[1].trim().split(/[\s,]+/).map(parseFloat);
-                    matrix.e = vals[0] || 0;
-                    matrix.f = vals[1] || 0;
+                case 'skewX':
+                case 'skewY': {
+                    if (v.length !== 1) throw new Error(`${name}() transform requires one number.`);
+                    const tangent = Math.tan(v[0] * Math.PI / 180);
+                    next = name === 'skewX'
+                        ? { a: 1, b: 0, c: tangent, d: 1, e: 0, f: 0 }
+                        : { a: 1, b: tangent, c: 0, d: 1, e: 0, f: 0 };
+                    break;
+                }
+                default: throw new Error(`Unsupported SVG transform function: ${name}`);
+            }
+            if (!finiteMatrix(next)) throw new Error('SVG transform contains non-finite values.');
+            // SVG transform lists compose as T * S; the rightmost transform acts first.
+            result = multiply(result, next);
+        }
+        if (!found || !/^[\s,]*$/.test(attr.slice(last))) throw new Error(`Unsupported or malformed transform: ${attr}`);
+        return result;
+    };
+
+    const parseDimMm = (value, label) => {
+        const m = String(value).trim().match(/^([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)\s*(mm|cm|in|pt|px)?$/i);
+        if (!m) throw new Error(`Invalid SVG ${label} dimension: ${value}`);
+        const n = Number(m[1]);
+        if (!Number.isFinite(n) || n <= 0) throw new Error(`SVG ${label} dimension must be finite and greater than zero.`);
+        const unit = (m[2] || 'px').toLowerCase();
+        const factor = { mm: 1, cm: 10, in: 25.4, pt: 25.4 / 72, px: 25.4 / 96 }[unit];
+        const mm = n * factor;
+        if (!Number.isFinite(mm) || mm <= 0) throw new Error(`SVG ${label} dimension is outside the supported range.`);
+        return mm;
+    };
+
+    const widthText = svgEl.getAttribute('width');
+    const heightText = svgEl.getAttribute('height');
+    const hasWidth = widthText !== null;
+    const hasHeight = heightText !== null;
+    const widthMm = hasWidth ? parseDimMm(widthText, 'width') : null;
+    const heightMm = hasHeight ? parseDimMm(heightText, 'height') : null;
+    const vbText = svgEl.getAttribute('viewBox');
+    let viewport = { a: 25.4 / 96, b: 0, c: 0, d: 25.4 / 96, e: 0, f: 0 };
+    if (vbText !== null) {
+        const vb = numberList(vbText);
+        if (vb.length !== 4 || vb[2] <= 0 || vb[3] <= 0) throw new Error('SVG viewBox must contain four finite numbers with positive width and height.');
+        if (!hasWidth && !hasHeight) throw new Error('SVG only has a viewBox; please provide a physical width or height dimension.');
+        const viewportW = widthMm ?? heightMm * vb[2] / vb[3];
+        const viewportH = heightMm ?? widthMm * vb[3] / vb[2];
+        const par = (svgEl.getAttribute('preserveAspectRatio') || 'xMidYMid meet').trim().replace(/^defer\s+/, '');
+        let sx = viewportW / vb[2], sy = viewportH / vb[3], ox = 0, oy = 0;
+        if (par === 'xMidYMid meet') {
+            const scale = Math.min(sx, sy);
+            ox = (viewportW - vb[2] * scale) / 2;
+            oy = (viewportH - vb[3] * scale) / 2;
+            sx = sy = scale;
+        } else if (par !== 'none') {
+            throw new Error(`Unsupported preserveAspectRatio value: ${par}`);
+        }
+        viewport = { a: sx, b: 0, c: 0, d: sy, e: ox - vb[0] * sx, f: oy - vb[1] * sy };
+    }
+
+    const shapes = new Set(['path', 'rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon']);
+    const nonRendering = new Set(['defs', 'symbol', 'clipPath', 'mask', 'pattern', 'marker', 'metadata', 'title', 'desc']);
+    const parts = [];
+    const maxScaleOf = (m) => Math.hypot(m.a, m.b, m.c, m.d);
+    const isSimilarity = (m) => {
+        const x = m.a * m.a + m.b * m.b, y = m.c * m.c + m.d * m.d;
+        const dot = m.a * m.c + m.b * m.d;
+        const scale2 = Math.max(x, y, 1e-24);
+        return x > 0 && Math.abs(x - y) <= 1e-10 * scale2 && Math.abs(dot) <= 1e-10 * scale2;
+    };
+    const machinePoint = (p, m) => {
+        const q = apply(p, m);
+        if (!Number.isFinite(q.x) || !Number.isFinite(q.y)) throw new Error('SVG geometry transforms to a non-finite coordinate.');
+        return { x: q.x, y: -q.y };
+    };
+    const sampleSourceArc = (arc, matrix, endPoint) => {
+        const sweep = Math.abs(arc.endAngle - arc.startAngle);
+        const mappedRadius = maxScaleOf(matrix) * Math.max(arc.rx, arc.ry);
+        const length = sweep * mappedRadius;
+        const angleStep = mappedRadius <= 0.05 ? sweep : 2 * Math.acos(Math.max(-1, 1 - 0.05 / mappedRadius));
+        const n = Math.max(1, Math.ceil(length / 0.5), Math.ceil(sweep / Math.max(angleStep, 1e-6)));
+        if (n > 10000) throw new Error('SVG curve needs too many segments to meet the 0.05 mm tolerance.');
+        const raw = sampleArc(arc.cx, arc.cy, arc.rx, arc.ry, arc.phi, arc.startAngle, arc.endAngle, arc.ccw, n);
+        const sampled = raw.map((p) => ({ type: 'line', to: machinePoint(p, matrix) }));
+        sampled[sampled.length - 1].to = machinePoint(endPoint, matrix);
+        return sampled;
+    };
+
+    const visit = (el, parentMatrix, hidden = false) => {
+        if (el.nodeType !== 1) return;
+        const tag = el.localName;
+        if (hidden || nonRendering.has(tag)) return;
+        const local = parseTransform(el);
+        const combined = multiply(parentMatrix, local);
+        if (!finiteMatrix(combined) || combined.a * combined.d - combined.b * combined.c === 0) {
+            throw new Error('SVG contains a singular or non-finite transform.');
+        }
+        if (shapes.has(tag)) {
+            const d = primitiveToPath(el);
+            if (d) {
+                const finalMatrix = multiply(viewport, combined);
+                const curveScale = maxScaleOf(finalMatrix);
+                const parsed = parseDAttribute(d, curveScale);
+                for (const subpath of parsed) {
+                    const startMm = machinePoint({ x: subpath.startX, y: subpath.startY }, finalMatrix);
+                    const transformedMoves = [];
+                    for (const move of subpath.moves) {
+                        if (move.type === 'arc' && move.sourceArc) {
+                            const arc = move.sourceArc;
+                            if (Math.abs(arc.rx - arc.ry) <= 1e-9 * Math.max(arc.rx, arc.ry, 1) && isSimilarity(finalMatrix)) {
+                                const center = machinePoint({ x: arc.cx, y: arc.cy }, finalMatrix);
+                                const to = machinePoint(move.to, finalMatrix);
+                                const scale = Math.sqrt(finalMatrix.a * finalMatrix.a + finalMatrix.b * finalMatrix.b);
+                                const det = combined.a * combined.d - combined.b * combined.c;
+                                transformedMoves.push({
+                                    type: 'arc', to, center, radius: arc.rx * scale,
+                                    clockwise: det < 0 ? !arc.ccw : arc.ccw
+                                });
+                            } else {
+                                transformedMoves.push(...sampleSourceArc(arc, finalMatrix, move.to));
+                            }
+                        } else {
+                            transformedMoves.push({ type: move.type, to: machinePoint(move.to, finalMatrix) });
+                        }
+                    }
+                    if (transformedMoves.length === 0) continue;
+                    const points = flattenMovesToPoints(startMm, transformedMoves, 0.5);
+                    parts.push({
+                        id: `Part_${parts.length + 1}`, barStyle: 'path', points,
+                        moves: transformedMoves, startPoint: startMm, holes: []
+                    });
                 }
             }
         }
-        return matrix;
+        for (const child of Array.from(el.children || [])) visit(child, combined, false);
     };
-
-    const applyMatrixPt = (pt, m) => ({
-        x: m.a * pt.x + m.c * pt.y + m.e,
-        y: m.b * pt.x + m.d * pt.y + m.f
-    });
-
-    elements.forEach(el => {
-        const d = primitiveToPath(el);
-        if (!d) return;
-
-        const matrix = parseTransform(el);
-        const hasTransform = !(matrix.a === 1 && matrix.b === 0 && matrix.c === 0 &&
-            matrix.d === 1 && matrix.e === 0 && matrix.f === 0);
-        // If there's a non-trivial rotation/skew, arcs may not stay circular
-        const hasRotation = Math.abs(matrix.b) > 1e-6 || Math.abs(matrix.c) > 1e-6;
-
-        const parsed = parseDAttribute(d, svgToMm);
-        if (!parsed.moves || parsed.moves.length === 0) return;
-
-        // Transform and convert to mm, flip Y
-        const transformMove = (move) => {
-            const newMove = { ...move };
-            if (move.to) {
-                const tp = applyMatrixPt(move.to, matrix);
-                newMove.to = { x: tp.x * svgToMm, y: -tp.y * svgToMm };
-            }
-            if (move.center) {
-                const tc = applyMatrixPt(move.center, matrix);
-                newMove.center = { x: tc.x * svgToMm, y: -tc.y * svgToMm };
-                // Preserve the intended geometric sweep after transforming into CNC space.
-                newMove.clockwise = move.clockwise;
-                newMove.radius = move.radius * svgToMm;
-            }
-            // If there's rotation in the transform, demote arcs to lines
-            if (hasRotation && move.type === 'arc') {
-                newMove.type = 'line';
-                delete newMove.center;
-                delete newMove.radius;
-                delete newMove.clockwise;
-            }
-            return newMove;
-        };
-
-        const startPt = applyMatrixPt({ x: parsed.startX, y: parsed.startY }, matrix);
-        const startMm = { x: startPt.x * svgToMm, y: -startPt.y * svgToMm };
-
-        const transformedMoves = parsed.moves.map(transformMove);
-
-        // Build backward-compatible `points` array from moves.
-        // Important: sample arcs so offset paths preserve rounded geometry.
-        const points = flattenMovesToPoints(startMm, transformedMoves, 0.5);
-
-        parts.push({
-            id: `Part_${partIdCounter++}`,
-            barStyle: 'path',
-            points: points,
-            moves: transformedMoves,
-            startPoint: startMm,
-            holes: []
-        });
-    });
-
+    visit(svgEl, identity(), false);
     return parts;
 }

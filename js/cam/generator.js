@@ -17,6 +17,7 @@ import {
     reverseClosedGeom
 } from './operations.js';
 import { gcomment } from '../utils.js';
+import { validateMachiningInputs } from './validation.js';
 
 function polygonArea(pts) {
     let a = 0;
@@ -332,13 +333,17 @@ export function buildPartGcode(part, mfg) {
  * @returns {Array<{name: string, text: string}>} 檔案陣列
  */
 export function buildAllGcodes(parts, mfg) {
+    const validation = validateMachiningInputs(parts, mfg);
+    if (validation.errors.length > 0) {
+        throw new Error(validation.errors.join('\n'));
+    }
     const files = [];
     const stockTopZ = Number.isFinite(mfg.stockTopZ) ? mfg.stockTopZ : 0;
 
     // 胚料表面清掃：胚料的前置加工（取真平），是一道「完全獨立的工序」——
     // 它用自己的刀具、進給與轉速，跑完必須停機換刀、重新對刀才能加工零件。
     // 因此啟用清掃時只輸出清掃程式，絕不把零件刀路混進同一支程式。
-    const faceDepth = Math.max(0, mfg.surfaceCleanDepth || 0);
+    const faceDepth = mfg.surfaceCleanDepth;
     if (mfg.faceEnable && faceDepth > 0 && mfg.stockBounds) {
         const faceLines = faceStockOps({
             x0: mfg.stockBounds.minX,

@@ -185,11 +185,9 @@ export function update3DToolpath(gcodeText, mfg) {
     if (!scene) return;
 
     if (animationReqId) cancelAnimationFrame(animationReqId);
+    animationReqId = null;
     isPlaying = false;
     updatePlayBtnState();
-
-    // Show UI control overlay
-    document.getElementById('animControls').style.display = 'flex';
 
     // Clear old objects
     while (toolpathGroup.children.length > 0) {
@@ -204,7 +202,23 @@ export function update3DToolpath(gcodeText, mfg) {
     toolpathLinesGroup = new THREE.Group();
     toolpathGroup.add(toolpathLinesGroup);
 
-    if (!gcodeText) return;
+    if (!gcodeText) {
+        animationPoints = [];
+        pathLengths = [];
+        totalPathLength = 0;
+        currentAnimProg = 0;
+        const controlsEl = document.getElementById('animControls');
+        if (controlsEl) controlsEl.style.display = 'none';
+        if (uiRefs.slider) uiRefs.slider.disabled = true;
+        if (uiRefs.btnPlay) uiRefs.btnPlay.disabled = true;
+        updateAnimationState();
+        return;
+    }
+
+    // Show UI control overlay for a valid toolpath.
+    document.getElementById('animControls').style.display = 'flex';
+    if (uiRefs.slider) uiRefs.slider.disabled = false;
+    if (uiRefs.btnPlay) uiRefs.btnPlay.disabled = false;
 
     const lines = gcodeText.split('\n');
     let x = 0, y = 0, z = mfg.safeZ || 5;
