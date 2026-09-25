@@ -5,6 +5,7 @@
 
 let scene, camera, renderer, controls;
 let toolpathGroup;
+let viewerReady = false;
 
 export function init3DViewer(containerId) {
     const container = document.getElementById(containerId);
@@ -59,6 +60,7 @@ export function init3DViewer(containerId) {
         }
     });
     resizeObserver.observe(container);
+    viewerReady = true;
 
     // Animation Loop
     function animate() {
@@ -182,7 +184,7 @@ function initToolhead(toolDiameter) {
  * Parses Gcode string and sets up animation data
  */
 export function update3DToolpath(gcodeText, mfg) {
-    if (!scene) return;
+    if (!viewerReady) return;
 
     if (animationReqId) cancelAnimationFrame(animationReqId);
     animationReqId = null;

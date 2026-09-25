@@ -10,6 +10,7 @@ import { getProgramOriginContext } from './cam/program-context.js';
 import { gcodeHeader, gcodeFooter, buildFacePattern } from './cam/operations.js';
 import { init3DViewer, update3DToolpath, linkAnimationUI, reset3DView } from './viewer3d.js';
 import { buildHanziParts } from './text/hanzi-text.js';
+import { attachPreviewGestures } from './preview-gestures.js';
 
 // Elements
 const dropZone = document.getElementById('dropZone');
@@ -19,6 +20,9 @@ const generateBtn = document.getElementById('generateBtn');
 const resetDefaultsBtn = document.getElementById('resetDefaultsBtn');
 const logText = document.getElementById('logText');
 const themeSelect = document.getElementById('themeSelect');
+const fitPreviewBtn = document.getElementById('fitPreviewBtn');
+let resetPreviewView = null;
+fitPreviewBtn?.addEventListener('click', () => resetPreviewView?.());
 
 const tab2D = document.getElementById('tab2D');
 const tab3D = document.getElementById('tab3D');
@@ -244,12 +248,18 @@ rotateAngle.addEventListener('input', (e) => {
 });
 
 let currentParts = null;
-let isDraggingSvg = false;
 let cleanupPreviewInteractions = null;
 let previewFlipY = false;
 
-// Init 3D View
-init3DViewer('preview3D');
+// Keep 2D editing and G-code export available when WebGL is unavailable.
+try {
+    init3DViewer('preview3D');
+} catch (error) {
+    tab3D.disabled = true;
+    tab3D.textContent = '3D 不支援';
+    tab3D.title = `此瀏覽器無法啟動 3D 預覽：${error.message}`;
+    console.warn('3D preview unavailable:', error);
+}
 linkAnimationUI(progressSlider, lblTime, lblProgress, btnPlayPause, speedSelect, btnReset);
 if (btnResetView) {
     btnResetView.addEventListener('click', () => {
@@ -773,6 +783,7 @@ function renderPreviewSvg() {
 function processFile(file) {
     log(`正在載入 ${file.name}...`);
     refreshPreviewTransform = null;
+    resetPreviewView = null;
     if (typeof cleanupPreviewInteractions === 'function') {
         cleanupPreviewInteractions();
         cleanupPreviewInteractions = null;
@@ -908,6 +919,13 @@ function setupSvgInteractions(parts) {
     const svgEl = previewSvg.querySelector('svg');
     if (!svgEl) return;
 
+    if (window.matchMedia?.('(pointer: coarse)').matches) {
+        svgEl.querySelectorAll('path[data-source-part-id]').forEach((path) => {
+            const hitTarget = path.cloneNode(false);
+            hitTarget.classList.add('tap-target');
+            path.before(hitTarget);
+        });
+    }
     const elements = svgEl.querySelectorAll('[data-source-part-id]');
 
     parts.forEach((part) => {
@@ -919,7 +937,6 @@ function setupSvgInteractions(parts) {
     elements.forEach((el) => {
         el.addEventListener('click', (e) => {
             e.stopPropagation();
-            if (isDraggingSvg) return;
             const sourcePartId = el.dataset.sourcePartId;
             const selectedMode = getSelectedToolpathMode();
             const changedCount = applyToolpathModeToPartIds([sourcePartId], selectedMode);
@@ -930,114 +947,30 @@ function setupSvgInteractions(parts) {
         });
     });
 
-    let scale = 1;
-    let dragState = null;
-
-    const selectionBox = document.createElement('div');
-    selectionBox.className = 'selection-box';
-    selectionBox.hidden = true;
-    previewSvg.appendChild(selectionBox);
-
-    svgEl.style.transformOrigin = 'center center';
-    const getRotateDeg = () => (parseFloat(rotateAngle.value) || 0);
-
-    function updateTransform(animate = false) {
-        const rot = getRotateDeg();
-        svgEl.style.transition = animate ? 'transform 0.2s ease-in-out' : 'none';
-        svgEl.style.transform = `scale(${scale}) rotate(${rot}deg)`;
-    }
-    refreshPreviewTransform = (animate = false) => updateTransform(animate);
-
-    // Zoom (Mouse Wheel)
-    const handleWheel = (e) => {
-        e.preventDefault();
-        const zoomDelta = e.deltaY > 0 ? 0.9 : 1.1;
-        scale *= zoomDelta;
-        scale = Math.max(0.1, Math.min(scale, 10));
-        updateTransform(false);
-    };
-    previewSvg.addEventListener('wheel', handleWheel, { passive: false });
-
-    const handleMouseDown = (e) => {
-        if (e.button !== 0) return;
-        const rect = previewSvg.getBoundingClientRect();
-        dragState = {
-            startX: e.clientX - rect.left,
-            startY: e.clientY - rect.top,
-            selecting: false
-        };
-        isDraggingSvg = false;
-        previewSvg.style.cursor = 'crosshair';
-    };
-    previewSvg.addEventListener('mousedown', handleMouseDown);
-
-    const handleMouseMove = (e) => {
-        if (!dragState) return;
-        const rect = previewSvg.getBoundingClientRect();
-        const currentX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
-        const currentY = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
-        const dx = currentX - dragState.startX;
-        const dy = currentY - dragState.startY;
-        if (!dragState.selecting && Math.hypot(dx, dy) < 6) {
-            return;
-        }
-        dragState.selecting = true;
-        isDraggingSvg = true;
-        const left = Math.min(dragState.startX, currentX);
-        const top = Math.min(dragState.startY, currentY);
-        selectionBox.hidden = false;
-        selectionBox.style.left = `${left}px`;
-        selectionBox.style.top = `${top}px`;
-        selectionBox.style.width = `${Math.abs(dx)}px`;
-        selectionBox.style.height = `${Math.abs(dy)}px`;
-    };
-    window.addEventListener('mousemove', handleMouseMove);
-
-    const handleMouseUp = () => {
-        if (!dragState) return;
-        previewSvg.style.cursor = 'default';
-        if (dragState.selecting && !selectionBox.hidden) {
-            const boxRect = selectionBox.getBoundingClientRect();
+    const gestures = attachPreviewGestures({
+        container: previewSvg,
+        svg: svgEl,
+        rotation: () => parseFloat(rotateAngle.value) || 0,
+        onBoxSelect(boxRect) {
             const selectedIds = new Set();
             elements.forEach((el) => {
                 const rect = el.getBoundingClientRect();
-                const fullyContained = rect.left >= boxRect.left &&
-                    rect.right <= boxRect.right &&
-                    rect.top >= boxRect.top &&
-                    rect.bottom <= boxRect.bottom;
-                if (fullyContained && el.dataset.sourcePartId) {
-                    selectedIds.add(el.dataset.sourcePartId);
-                }
+                if (rect.left >= boxRect.left && rect.right <= boxRect.right &&
+                    rect.top >= boxRect.top && rect.bottom <= boxRect.bottom &&
+                    el.dataset.sourcePartId) selectedIds.add(el.dataset.sourcePartId);
             });
             if (selectedIds.size > 0) {
-                const selectedMode = getSelectedToolpathMode();
-                const changedCount = applyToolpathModeToPartIds(Array.from(selectedIds), selectedMode);
-                if (changedCount > 0) {
-                    log(`已將 ${changedCount} 個路徑設為 ${getModeName(selectedMode)}。`);
-                }
+                const changedCount = applyToolpathModeToPartIds([...selectedIds], getSelectedToolpathMode());
+                if (changedCount > 0) log(`已將 ${changedCount} 個路徑設為 ${getModeName(getSelectedToolpathMode())}。`);
             }
         }
-        selectionBox.hidden = true;
-        dragState = null;
-        setTimeout(() => {
-            isDraggingSvg = false;
-        }, 50);
-    };
-    window.addEventListener('mouseup', handleMouseUp);
-
-    updateTransform(false);
-
+    });
+    refreshPreviewTransform = gestures.render;
+    resetPreviewView = gestures.reset;
     cleanupPreviewInteractions = () => {
-        previewSvg.removeEventListener('wheel', handleWheel);
-        previewSvg.removeEventListener('mousedown', handleMouseDown);
-        window.removeEventListener('mousemove', handleMouseMove);
-        window.removeEventListener('mouseup', handleMouseUp);
-        previewSvg.style.cursor = 'default';
-        if (selectionBox.isConnected) {
-            selectionBox.remove();
-        }
-        dragState = null;
-        isDraggingSvg = false;
+        gestures.destroy();
+        refreshPreviewTransform = null;
+        resetPreviewView = null;
     };
 }
 
@@ -1812,7 +1745,7 @@ generateBtn.addEventListener('click', () => {
         update3DToolpath(program.txt, program.viewerMfg);
 
         // Switch to 3D tab
-        if (!tab3D.classList.contains('active')) {
+        if (!tab3D.disabled && !tab3D.classList.contains('active')) {
             tab3D.click();
         }
 
@@ -1824,8 +1757,9 @@ generateBtn.addEventListener('click', () => {
         a.download = `svg_export_${Date.now()}.nc`;
         document.body.appendChild(a);
         a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        // Mobile browsers may start the download after the click task returns.
+        setTimeout(() => a.remove(), 1000);
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
 
         // 讓加工順序清單同步顯示實際的（優化後）順序
         if (program.orderOptimizeInfo) {
@@ -2011,11 +1945,26 @@ function renderToolpathList() {
 
         el.innerHTML = `
             <span><strong style="color:var(--text-muted)">#${index + 1}</strong> 路徑</span>
-            <span style="display:flex;align-items:center;gap:4px;">
+            <span class="toolpath-item-actions">
                 <span class="mode-badge ${part.toolpathMode || 'none'}">${modeLabel}</span>${partialBadge}${sweepBadge}
-                <button class="toolpath-remove-btn" title="移除此刀路" style="margin-left:6px;background:none;border:none;cursor:pointer;color:var(--text-muted);font-size:1rem;line-height:1;padding:0 2px;" data-part-id="${part.id}">×</button>
+                <button type="button" class="toolpath-order-btn" data-direction="-1" aria-label="將路徑 #${index + 1} 上移" ${index === 0 ? 'disabled' : ''}>↑</button>
+                <button type="button" class="toolpath-order-btn" data-direction="1" aria-label="將路徑 #${index + 1} 下移" ${index === currentParts.length - 1 ? 'disabled' : ''}>↓</button>
+                <button type="button" class="toolpath-remove-btn" title="移除此刀路" aria-label="移除路徑 #${index + 1} 的刀路設定" data-part-id="${part.id}">×</button>
             </span>
         `;
+
+        el.querySelectorAll('.toolpath-order-btn').forEach((button) => {
+            button.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const from = currentParts.findIndex((item) => item.id === part.id);
+                const to = from + Number(button.dataset.direction);
+                if (from < 0 || to < 0 || to >= currentParts.length) return;
+                [currentParts[from], currentParts[to]] = [currentParts[to], currentParts[from]];
+                renderToolpathList();
+                list.querySelector(`[data-id="${part.id}"] .toolpath-order-btn[data-direction="${button.dataset.direction}"]`)?.focus();
+                log(`已調整加工順序：移至 #${to + 1}。`);
+            });
+        });
 
         el.querySelector('.toolpath-remove-btn').addEventListener('click', (e) => {
             e.stopPropagation();

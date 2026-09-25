@@ -54,6 +54,7 @@
                     <div class="view-tabs" style="display: flex; gap: 8px;">
                         <button id="tab2D" class="tab-btn active">2D 圖形視圖</button>
                         <button id="tab3D" class="tab-btn">3D 刀路預覽</button>
+                        <button id="fitPreviewBtn" class="tab-btn" type="button" title="還原 2D 圖形縮放和位置">適合畫面</button>
                     </div>
                 </div>
 
@@ -136,6 +137,7 @@
                             title="清掃步距 (mm)">
                         <span id="sweepStepoverUnit" style="display:none; font-size:0.82rem; color:#10b981;">mm</span>
                     </div>
+                    <p class="preview-gesture-hint">輕點線段指定刀路 · 單指移動圖形 · 雙指縮放</p>
                     <div id="previewSvg">
                         <!-- SVG will be injected here -->
                     </div>
@@ -190,7 +192,7 @@
             <!-- Right Side: Settings -->
             <div class="settings-column">
             <div class="simple-guide">
-                <span class="guide-step">①</span> 拖入 SVG / DXF
+                <span class="guide-step">①</span> 選取 SVG / DXF
                 <span class="guide-step">②</span> 點選圖形、指定刀路
                 <span class="guide-step">③</span> 選材料 / 厚度 / 刀徑
                 <span class="guide-step">④</span> 生成下載
@@ -355,7 +357,7 @@
 
                 <div class="settings-section pane settings-subpanel collapsible-panel">
                     <div class="section-header panel-header">
-                        <h2 class="subpanel-title">加工順序 (上下拖曳以排序)</h2>
+                        <h2 class="subpanel-title">加工順序（拖曳或按上下鍵排序）</h2>
                         <div class="panel-header-actions">
                         <label class="panel-inline-check"
                             title="生成 G-Code 時自動以最短空移距離重排加工順序（鑽孔/內銑等先加工，銑線外輪廓保持最後）。取消勾選則完全依清單順序加工">
@@ -366,6 +368,7 @@
                         </div>
                     </div>
                     <div class="panel-content" id="toolpathOrderBody" hidden>
+                    <p class="face-note">使用上下鍵手動排序時，請關閉「最短路徑」，生成的 G-code 才會依清單順序加工。</p>
                     <div class="toolpath-list-container" id="toolpathList">
                         <div style="padding: 10px; color: var(--text-muted); text-align: center; font-size: 0.85rem;">
                             等待載入 SVG / DXF 檔案...</div>

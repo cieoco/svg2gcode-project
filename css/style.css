@@ -313,6 +313,18 @@ body {
     justify-content: center;
     position: relative;
     overflow: hidden;
+    touch-action: none;
+}
+
+.preview-gesture-hint { display: none; }
+@media (pointer: coarse) {
+    .preview-gesture-hint {
+        display: block;
+        color: var(--text-muted);
+        font-size: 0.75rem;
+        line-height: 1.4;
+        margin-bottom: 0.35rem;
+    }
 }
 
 #previewSvg svg {
@@ -331,6 +343,12 @@ body {
     pointer-events: visibleStroke;
     transition: stroke 0.2s, stroke-width 0.2s;
     cursor: pointer;
+}
+
+@media (pointer: coarse) {
+    #previewSvg svg * {
+        stroke-width: 3px;
+    }
 }
 
 #previewSvg svg *.path-none {
@@ -366,6 +384,14 @@ body {
 #previewSvg svg *:hover {
     stroke-width: 2.5px !important;
     opacity: 0.8;
+}
+
+#previewSvg svg *.tap-target,
+#previewSvg svg *.tap-target:hover {
+    stroke: rgba(0, 0, 0, 0.001) !important;
+    stroke-width: 24px !important;
+    opacity: 1 !important;
+    pointer-events: stroke;
 }
 
 .selection-box {
@@ -718,6 +744,58 @@ body.theme-light #logText {
     font-size: 0.85rem;
     color: var(--text-main);
     transition: all 0.2s;
+}
+
+.toolpath-item-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    min-width: 0;
+}
+
+.toolpath-order-btn,
+.toolpath-remove-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 36px;
+    min-height: 36px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-main);
+    background: var(--bg-panel);
+    font-size: 1rem;
+    cursor: pointer;
+}
+
+.toolpath-order-btn:disabled { opacity: 0.35; cursor: default; }
+.toolpath-order-btn:focus-visible,
+.toolpath-remove-btn:focus-visible { outline: 2px solid var(--primary); }
+
+@media (max-width: 600px) {
+    .app-container { padding: 0.75rem; gap: 0.75rem; }
+    .app-header, .header-controls, .logo-area { align-items: flex-start; flex-wrap: wrap; }
+    .header-controls { width: 100%; justify-content: space-between; }
+    .app-title { font-size: 1.2rem; }
+    .app-subtitle { font-size: 0.75rem; }
+    .pane { padding: 0.85rem; gap: 0.85rem; }
+    .preview-section > .section-header { flex-wrap: wrap; gap: 0.5rem; }
+    .view-tabs { width: 100%; flex-wrap: wrap; }
+    .tab-btn { min-height: 44px; padding: 0.5rem; }
+    .svg-preview-container {
+        flex-basis: clamp(300px, 52dvh, 480px);
+        min-height: clamp(300px, 52dvh, 480px);
+        max-height: clamp(300px, 52dvh, 480px);
+        padding: 0.5rem;
+    }
+    .toolpath-mode-selector label { min-height: 44px; }
+    .settings-kv .kv-field { min-height: 44px; font-size: 1rem; }
+    .toolpath-item { flex-wrap: wrap; gap: 0.35rem; }
+    .toolpath-item-actions { width: 100%; justify-content: flex-end; flex-wrap: wrap; }
+    .toolpath-order-btn, .toolpath-remove-btn { min-width: 44px; min-height: 44px; }
+    .viewer-controls { width: calc(100% - 1rem); bottom: 0.5rem; padding: 0.4rem; }
+    .ctrl-btn { min-width: 44px; min-height: 44px; }
+    .progress-container span { display: none; }
 }
 
 .toolpath-item:last-child {
