@@ -570,11 +570,52 @@ function flattenMovesToPoints(startPoint, moves, stepMm = 0.5) {
  * AND a `points` array (flattened points for backward compatibility).
  */
 export function parseSVG(svgText) {
+    if (/<\?xml-stylesheet\b/i.test(svgText)) {
+        throw new Error('SVG external stylesheets are unsupported; inline the styles before importing.');
+    }
     const parser = new DOMParser();
     const doc = parser.parseFromString(cleanSVG(svgText), "image/svg+xml");
     const svgEl = doc.documentElement;
     if (!svgEl || svgEl.localName !== 'svg' || doc.querySelector('parsererror')) {
         throw new Error('Invalid SVG XML: unable to parse the SVG document.');
+    }
+    if (Array.from(svgEl.getElementsByTagName('*')).some(el =>
+        el.localName === 'link' && /stylesheet/i.test(el.getAttribute('rel') || ''))) {
+        throw new Error('SVG external stylesheets are unsupported; inline the styles before importing.');
+    }
+
+    const cssRules = [];
+    for (const styleEl of Array.from(svgEl.getElementsByTagName('*')).filter(el => el.localName === 'style')) {
+        const css = styleEl.textContent.replace(/\/\*[\s\S]*?\*\//g, '');
+        if (/@(?:import|media|supports|layer|container|scope)\b/i.test(css)) {
+            throw new Error('SVG CSS at-rules are unsupported; flatten the styles before importing.');
+        }
+        const rulePattern = /([^{}]+)\{([^{}]*)\}/g;
+        let rule;
+        let end = 0;
+        while ((rule = rulePattern.exec(css))) {
+            if (css.slice(end, rule.index).trim()) throw new Error('Unsupported SVG CSS syntax.');
+            end = rulePattern.lastIndex;
+            const declarations = rule[2].split(';').map(item => item.trim()).filter(Boolean);
+            const relevant = declarations.map(item => {
+                const colon = item.indexOf(':');
+                if (colon < 0) throw new Error('Unsupported SVG CSS declaration.');
+                const property = item.slice(0, colon).trim().toLowerCase();
+                const raw = item.slice(colon + 1).trim();
+                return { property, value: raw.replace(/\s*!important\s*$/i, '').trim().toLowerCase(), important: /!important\s*$/i.test(raw) };
+            }).filter(item => item.property === 'display' || item.property === 'visibility');
+            if (!relevant.length) continue;
+            for (const selector of rule[1].split(',').map(item => item.trim())) {
+                if (!/^(?:[a-zA-Z][\w-]*|\*|[.#][\w-]+)(?:[.#][\w-]+)*(?:\s+(?:[a-zA-Z][\w-]*|\*|[.#][\w-]+)(?:[.#][\w-]+)*)*$/.test(selector)) {
+                    throw new Error(`Unsupported SVG CSS selector: ${selector}`);
+                }
+                const ids = (selector.match(/#[\w-]+/g) || []).length;
+                const classes = (selector.match(/\.[\w-]+/g) || []).length;
+                const tags = (selector.match(/(?:^|\s)[a-zA-Z][\w-]*/g) || []).length;
+                cssRules.push({ selector, declarations: relevant, specificity: ids * 100 + classes * 10 + tags });
+            }
+        }
+        if (css.slice(end).trim()) throw new Error('Unsupported SVG CSS syntax.');
     }
 
     const identity = () => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 });
@@ -730,8 +771,22 @@ export function parseSVG(svgText) {
         const style = el.getAttribute('style') || '';
         const declarations = style.split(';').filter((item) => item.split(':')[0]?.trim().toLowerCase() === name);
         const declaration = declarations.filter((item) => /!important\s*$/i.test(item)).at(-1) || declarations.at(-1);
-        return (declaration ? declaration.slice(declaration.indexOf(':') + 1).trim() : el.getAttribute(name))
-            ?.toLowerCase().replace(/\s*!important\s*$/, '').trim();
+        let winner = { value: el.getAttribute(name), important: false, specificity: -1, order: -1 };
+        cssRules.forEach((rule, index) => {
+            if (!el.matches(rule.selector)) return;
+            for (const item of rule.declarations) {
+                if (item.property !== name) continue;
+                if (item.important && !winner.important || item.important === winner.important &&
+                    (rule.specificity > winner.specificity || rule.specificity === winner.specificity && index >= winner.order)) {
+                    winner = { ...item, specificity: rule.specificity, order: index };
+                }
+            }
+        });
+        if (declaration) {
+            const important = /!important\s*$/i.test(declaration);
+            if (important || !winner.important) winner.value = declaration.slice(declaration.indexOf(':') + 1).trim();
+        }
+        return winner.value?.toLowerCase().replace(/\s*!important\s*$/, '').trim();
     };
     const visit = (el, parentMatrix, displayNone = false, inheritedVisibility = 'visible') => {
         if (el.nodeType !== 1) return;

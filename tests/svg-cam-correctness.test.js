@@ -470,6 +470,34 @@ test('visible SVG children may override inherited visibility, but not display no
     pointCloseTo(parts[0].startPoint, { x: 0, y: 0 });
 });
 
+test('embedded class and id CSS visibility rules control machining geometry', () => {
+    const parts = parseSVG(svg(`
+        <style>.hidden { display: none } g.invisible { visibility: hidden } #show { visibility: visible } .hidden { display: block }</style>
+        <path class="hidden" style="display:none" d="M0 0 L10 0"/>
+        <g class="invisible"><path d="M10 0 L20 0"/><path id="show" d="M20 0 L30 0"/></g>
+        <path class="hidden" d="M30 0 L40 0"/>
+    `));
+    assert.equal(parts.length, 2);
+    pointCloseTo(parts[0].startPoint, { x: 20, y: 0 });
+    pointCloseTo(parts[1].startPoint, { x: 30, y: 0 });
+});
+
+test('important embedded CSS can hide a path despite a normal inline display', () => {
+    const parts = parseSVG(svg(`
+        <style>.hidden { display:none !important }</style>
+        <path class="hidden" style="display:block" d="M0 0 L10 0"/>
+        <path d="M10 0 L20 0"/>
+    `));
+    assert.equal(parts.length, 1);
+    pointCloseTo(parts[0].startPoint, { x: 10, y: 0 });
+});
+
+test('unsupported SVG stylesheet forms fail closed', () => {
+    assert.throws(() => parseSVG(svg('<style>@media print {.hidden {display:none}}</style><path class="hidden" d="M0 0 L10 0"/>')), /CSS at-rules/);
+    assert.throws(() => parseSVG(svg('<style>.hidden:hover {display:none}</style><path class="hidden" d="M0 0 L10 0"/>')), /CSS selector/);
+    assert.throws(() => parseSVG(`<?xml-stylesheet href="hidden.css" type="text/css"?>${svg(path('M0 0 L10 0'))}`), /external stylesheets/);
+});
+
 test('the browser smoke SVG fixture imports as two separate milling parts', async () => {
     const source = await readFile(new URL('./fixtures/compound-path.svg', import.meta.url), 'utf8');
     const parts = parseSVG(source);

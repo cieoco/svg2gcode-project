@@ -66,7 +66,7 @@ npx http-server -p 8080 -c-1
 
 SVG 有 `viewBox` 時，根元素需提供至少一項實體 `width` 或 `height`，另一項會依比例推算；沒有 `viewBox` 時，幾何座標按 CSS px 換算（96 px = 25.4 mm）。巢狀群組與元素的 SVG transform 會套用到路徑；同一個 `path` 的各子路徑會分別產生刀路，不會以切削線連接。此工具不是完整 SVG renderer，不支援文字排版、`use`/`symbol`、裁切/遮罩及筆畫外擴等功能。無效的加工參數會阻擋 G-code 生成與下載。
 
-非貫穿深度必須大於 0 且小於材料厚度。陣列最多 400 組、展開後最多 2000 條路徑；超限會停止預覽與生成。SVG 的 `display:none` 與 `visibility:hidden` 幾何不會匯入；目前尚未解析外部樣式表或 class 規則。
+非貫穿深度必須大於 0 且小於材料厚度。陣列最多 400 組、展開後最多 2000 條路徑；超限會停止預覽與生成。SVG 的 `display:none` 與 `visibility:hidden` 幾何不會匯入，包含 SVG 內 `<style>` 的基本元素、class、id 與後代選擇器。外部樣式表及不支援的 CSS 規則會使匯入明確失敗，避免把本應隱藏的圖形當成刀路。
 
 完整支援範圍與正確性規格見 [docs/sdd-cam-correctness.md](docs/sdd-cam-correctness.md)，本輪加工安全修正見 [docs/sdd-safety-loop.md](docs/sdd-safety-loop.md)。
 
