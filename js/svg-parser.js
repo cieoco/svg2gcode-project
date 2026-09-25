@@ -726,16 +726,24 @@ export function parseSVG(svgText) {
         return sampled;
     };
 
-    const visit = (el, parentMatrix, hidden = false) => {
+    const presentation = (el, name) => {
+        const style = el.getAttribute('style') || '';
+        const declarations = style.split(';').filter((item) => item.split(':')[0]?.trim().toLowerCase() === name);
+        const declaration = declarations.filter((item) => /!important\s*$/i.test(item)).at(-1) || declarations.at(-1);
+        return (declaration ? declaration.slice(declaration.indexOf(':') + 1).trim() : el.getAttribute(name))
+            ?.toLowerCase().replace(/\s*!important\s*$/, '').trim();
+    };
+    const visit = (el, parentMatrix, displayNone = false, inheritedVisibility = 'visible') => {
         if (el.nodeType !== 1) return;
         const tag = el.localName;
-        if (hidden || nonRendering.has(tag)) return;
+        if (displayNone || nonRendering.has(tag) || presentation(el, 'display') === 'none') return;
+        const visibility = presentation(el, 'visibility') || inheritedVisibility;
         const local = parseTransform(el);
         const combined = multiply(parentMatrix, local);
         if (!finiteMatrix(combined) || combined.a * combined.d - combined.b * combined.c === 0) {
             throw new Error('SVG contains a singular or non-finite transform.');
         }
-        if (shapes.has(tag)) {
+        if (shapes.has(tag) && visibility !== 'hidden' && visibility !== 'collapse') {
             const d = primitiveToPath(el);
             if (d) {
                 const finalMatrix = multiply(viewport, combined);
@@ -772,7 +780,7 @@ export function parseSVG(svgText) {
                 }
             }
         }
-        for (const child of Array.from(el.children || [])) visit(child, combined, false);
+        for (const child of Array.from(el.children || [])) visit(child, combined, false, visibility);
     };
     visit(svgEl, identity(), false);
     return parts;

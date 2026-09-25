@@ -11,6 +11,7 @@ import { gcodeHeader, gcodeFooter, buildFacePattern } from './cam/operations.js'
 import { init3DViewer, update3DToolpath, linkAnimationUI, reset3DView } from './viewer3d.js';
 import { buildHanziParts } from './text/hanzi-text.js';
 import { attachPreviewGestures } from './preview-gestures.js';
+import { validateArrayPlan } from './cam/array-plan.js';
 
 // Elements
 const dropZone = document.getElementById('dropZone');
@@ -297,7 +298,7 @@ dropZone.addEventListener('drop', (e) => {
     e.preventDefault();
     dropZone.classList.remove('drag-over');
     const file = e.dataTransfer.files[0];
-    if (file && (isSvgFile(file) || isDxfFile(file))) {
+    if (file) {
         processFile(file);
     } else {
         log("請上傳有效的 SVG 或 DXF 檔案。");
@@ -771,6 +772,16 @@ function renderPreviewSvg() {
         return;
     }
 
+    const arrayError = validateArrayPlan(currentParts.length, getLayoutData());
+    if (arrayError) {
+        cleanupPreviewInteractions?.();
+        cleanupPreviewInteractions = null;
+        refreshPreviewTransform = null;
+        resetPreviewView = null;
+        previewSvg.textContent = arrayError;
+        return;
+    }
+
     const arraySettings = getPreviewArraySettings();
     previewSvg.innerHTML = buildPartsPreviewSvg(currentParts, {
         flipY: previewFlipY,
@@ -780,7 +791,11 @@ function renderPreviewSvg() {
     syncPreviewPartClasses();
 }
 
+let fileLoadSequence = 0;
+let fileLoadPending = false;
 function processFile(file) {
+    const loadSequence = ++fileLoadSequence;
+    fileLoadPending = true;
     log(`正在載入 ${file.name}...`);
     refreshPreviewTransform = null;
     resetPreviewView = null;
@@ -788,9 +803,17 @@ function processFile(file) {
         cleanupPreviewInteractions();
         cleanupPreviewInteractions = null;
     }
+    currentParts = null;
+    hanziBaseParts = null;
+    renderPreviewSvg();
+    renderToolpathList();
+    update3DToolpath('', { safeZ: 5 });
+    updateGenerateButtonState();
+    fileInput.value = '';
     const svgFile = isSvgFile(file);
     const dxfFile = isDxfFile(file);
     if (!svgFile && !dxfFile) {
+        fileLoadPending = false;
         log("不支援的檔案格式，請使用 SVG 或 DXF。");
         updateGenerateButtonState();
         return;
@@ -800,15 +823,19 @@ function processFile(file) {
     reader.onload = async (e) => {
         try {
             const fileContent = e.target.result;
+            let parsedParts;
             if (svgFile) {
                 // parseSVG 已把 Y 翻成機器座標（Y 向上），顯示時要再翻回螢幕
                 // 方向，否則 2D 預覽會與 G-Code / 3D 預覽上下顛倒
                 previewFlipY = true;
-                currentParts = await parseSVG(fileContent);
+                parsedParts = await parseSVG(fileContent);
             } else {
                 previewFlipY = true;
-                currentParts = parseDXF(fileContent);
+                parsedParts = parseDXF(fileContent);
             }
+            if (loadSequence !== fileLoadSequence) return;
+            currentParts = parsedParts;
+            fileLoadPending = false;
 
             currentParts.forEach((part, i) => {
                 part.id = 'part_' + Date.now() + '_' + i;
@@ -834,9 +861,24 @@ function processFile(file) {
             renderToolpathList();
 
         } catch (err) {
+            if (loadSequence !== fileLoadSequence) return;
+            fileLoadPending = false;
+            currentParts = null;
+            hanziBaseParts = null;
+            cleanupPreviewInteractions?.();
+            cleanupPreviewInteractions = null;
+            previewSvg.innerHTML = '';
+            renderToolpathList();
+            update3DToolpath('', { safeZ: 5 });
             log(`解析檔案時發生錯誤: ${err.message}`);
             updateGenerateButtonState();
         }
+    };
+    reader.onerror = () => {
+        if (loadSequence !== fileLoadSequence) return;
+        fileLoadPending = false;
+        log(`讀取 ${file.name} 失敗，請重新選擇檔案。`);
+        updateGenerateButtonState();
     };
     reader.readAsText(file);
 }
@@ -858,7 +900,8 @@ function getPartialSettings() {
     const cb = document.getElementById('partialCheck');
     const depthInput = document.getElementById('partialDepth');
     const isPartial = cb ? cb.checked : false;
-    const partialDepth = depthInput ? (parseFloat(depthInput.value) || 2) : 2;
+    const rawDepth = depthInput ? String(depthInput.value).trim() : null;
+    const partialDepth = rawDepth === null ? 2 : rawDepth === '' ? NaN : Number(rawDepth);
     return { isPartial, partialDepth };
 }
 
@@ -887,6 +930,10 @@ function applyToolpathModeToPartIds(partIds, selectedMode) {
     let changedCount = 0;
     const { isPartial, partialDepth } = getPartialSettings();
     const { sweep, sweepStepover } = getSweepSettings();
+    if (isPartial && (!Number.isFinite(partialDepth) || partialDepth <= 0)) {
+        log('非貫穿深度必須是大於 0 的有效數值；刀路設定未變更。');
+        return 0;
+    }
 
     currentParts.forEach((part) => {
         if (!targetIds.has(part.id)) return;
@@ -1340,6 +1387,9 @@ function rotatePartGeometry(part, angleDeg, originX, originY) {
 }
 
 function buildArrayParts(parts, mfg) {
+    if (parts.length === 0) return parts;
+    const arrayError = validateArrayPlan(parts.length, mfg);
+    if (arrayError) throw new Error(arrayError);
     const xCount = Math.max(1, Math.round(mfg.arrayCountX || 1));
     const yCount = Math.max(1, Math.round(mfg.arrayCountY || 1));
     const xSpacing = Number.isFinite(mfg.arraySpacingX) ? mfg.arraySpacingX : 0;
@@ -1463,9 +1513,12 @@ function parseFaceOrigin(value) {
 // 組出完整 G-Code 程式：generate（下載）與 3D 即時預覽共用同一條路徑。
 // 沒有載入設計檔也能跑「純清掃」：只要啟用清掃並填好胚料長寬。
 function buildProgram() {
+    if (fileLoadPending) return { blocked: true, errors: ['檔案仍在載入，請稍候再生成。'] };
     const sourceParts = Array.isArray(currentParts) ? currentParts : [];
 
     const { mfg, layout } = persistSettings();
+    const arrayError = validateArrayPlan(sourceParts.length, layout);
+    if (arrayError) return { blocked: true, errors: [arrayError] };
 
     // Deep copy parts to apply layout transforms without mutating the core data
     let partsToProcess = JSON.parse(JSON.stringify(sourceParts));
@@ -1722,7 +1775,7 @@ function updateGenerateButtonState() {
     const faceReady = Boolean(document.getElementById('faceEnable')?.checked)
         && (parseFloat(document.getElementById('stockW')?.value) || 0) > 0
         && (parseFloat(document.getElementById('stockH')?.value) || 0) > 0;
-    generateBtn.disabled = !hasParts && !faceReady;
+    generateBtn.disabled = fileLoadPending || (!hasParts && !faceReady);
 }
 
 generateBtn.addEventListener('click', () => {

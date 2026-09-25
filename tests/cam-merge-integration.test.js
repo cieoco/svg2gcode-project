@@ -6,6 +6,7 @@ import { buildAllGcodes, generateMachiningInfo } from '../js/cam/generator.js';
 import { gcodeHeader, gcodeFooter } from '../js/cam/operations.js';
 import { validateMachiningInputs } from '../js/cam/validation.js';
 import { getProgramOriginContext } from '../js/cam/program-context.js';
+import { validateArrayPlan } from '../js/cam/array-plan.js';
 
 // Run the actual UI program builder with settings supplied in memory.
 const source = readFileSync(new URL('../js/app.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
@@ -28,12 +29,13 @@ const part = { id: 'part', toolpathMode: 'on-path', barStyle: 'path',
     moves: [{ type: 'line', to: { x: 10, y: 0 } }] };
 function build(overrides = {}, parts = [part]) {
     const sandbox = {
-        currentParts: parts, persistSettings: () => ({ mfg: { ...defaults, ...overrides }, layout: {} }),
+        currentParts: parts, fileLoadPending: false,
+        persistSettings: () => ({ mfg: { ...defaults, ...overrides }, layout: {} }),
         buildArrayParts: p => p, ACTIVE_TOOLPATH_MODES: ['on-path', 'inside', 'outside', 'drill'],
         FACE_CORNER_NAMES: { bl: '左下', br: '右下', tl: '左上', tr: '右上', center: '中心' },
         collectSafetyWarnings: () => [], materialCommentName: () => 'WOOD',
         buildAllGcodes, generateMachiningInfo, gcodeHeader, gcodeFooter,
-        validateMachiningInputs, getProgramOriginContext
+        validateMachiningInputs, getProgramOriginContext, validateArrayPlan
     };
     return vm.runInNewContext(code + '\nbuildProgram()', sandbox);
 }

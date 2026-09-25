@@ -47,6 +47,15 @@ export function validateMachiningInputs(parts, mfg = {}) {
         if (!finite(mfg.thickness) || mfg.thickness <= 0) {
             add('材料厚度必須是有限且大於 0 的數值。');
         }
+        for (const part of activeParts) {
+            if (part?.isPartial !== true) continue;
+            const depth = part.partialDepth;
+            if (!finite(depth) || depth <= 0) {
+                add('非貫穿深度必須是有限且大於 0 的數值。');
+            } else if (finite(mfg.thickness) && mfg.thickness > 0 && depth >= mfg.thickness) {
+                add(`非貫穿深度 ${depth} mm 必須小於材料厚度 ${mfg.thickness} mm。`);
+            }
+        }
         if (!finite(mfg.overcut) || mfg.overcut < 0) {
             add('切穿量必須是有限且大於或等於 0 的數值。');
         }

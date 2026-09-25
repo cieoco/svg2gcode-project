@@ -66,7 +66,9 @@ npx http-server -p 8080 -c-1
 
 SVG 有 `viewBox` 時，根元素需提供至少一項實體 `width` 或 `height`，另一項會依比例推算；沒有 `viewBox` 時，幾何座標按 CSS px 換算（96 px = 25.4 mm）。巢狀群組與元素的 SVG transform 會套用到路徑；同一個 `path` 的各子路徑會分別產生刀路，不會以切削線連接。此工具不是完整 SVG renderer，不支援文字排版、`use`/`symbol`、裁切/遮罩及筆畫外擴等功能。無效的加工參數會阻擋 G-code 生成與下載。
 
-完整支援範圍與正確性規格見 [docs/sdd-cam-correctness.md](docs/sdd-cam-correctness.md)。
+非貫穿深度必須大於 0 且小於材料厚度。陣列最多 400 組、展開後最多 2000 條路徑；超限會停止預覽與生成。SVG 的 `display:none` 與 `visibility:hidden` 幾何不會匯入；目前尚未解析外部樣式表或 class 規則。
+
+完整支援範圍與正確性規格見 [docs/sdd-cam-correctness.md](docs/sdd-cam-correctness.md)，本輪加工安全修正見 [docs/sdd-safety-loop.md](docs/sdd-safety-loop.md)。
 
 手機操作：點選上傳區挑選 SVG／DXF；先選刀路模式，再輕點圖形中的線段。單指移動圖形、雙指縮放，按「適合畫面」可還原。加工順序可用上下鍵調整；若要依手動順序輸出，請關閉「最短路徑」。3D 預覽需要瀏覽器支援 WebGL。
 

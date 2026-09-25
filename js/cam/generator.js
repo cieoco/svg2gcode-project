@@ -101,7 +101,11 @@ export function buildPartGcode(part, mfg) {
     const topZ = Number.isFinite(mfg.stockTopZ) ? mfg.stockTopZ : 0;
 
     const isPartial = part.isPartial === true;
-    const cutDepth = isPartial ? topZ - Math.abs(part.partialDepth || 2) : -(thickness + overcut);
+    if (mode !== 'none' && isPartial && (!Number.isFinite(part.partialDepth) || part.partialDepth <= 0
+        || !Number.isFinite(thickness) || part.partialDepth >= thickness)) {
+        throw new Error('非貫穿深度必須大於 0，且小於材料厚度。');
+    }
+    const cutDepth = isPartial ? topZ - part.partialDepth : -(thickness + overcut);
     const drillZ = isPartial ? cutDepth : -(thickness + overcut);
 
     const tabEnabled = !isPartial

@@ -438,6 +438,38 @@ test('drilling does not require a contour stepdown', () => {
     assert.equal(result.errors.length, 0);
 });
 
+test('non-through depth must stay positive and below material thickness', () => {
+    const part = { toolpathMode: 'on-path', isPartial: true,
+        points: [{ x: 0, y: 0 }, { x: 10, y: 0 }] };
+    for (const depth of [0, -1, NaN, Infinity, 7, 20]) {
+        const result = validateMachiningInputs([{ ...part, partialDepth: depth }], validContourMfg({ thickness: 7 }));
+        assert.ok(result.errors.some(e => e.includes('非貫穿')), `depth ${depth} was accepted`);
+    }
+    assert.equal(validateMachiningInputs([{ ...part, partialDepth: 2 }], validContourMfg({ thickness: 7 })).errors.length, 0);
+});
+
+test('hidden SVG elements and groups are excluded from machining geometry', () => {
+    const parts = parseSVG(svg(`
+        <path display="none" d="M0 0 L10 0"/>
+        <g style="display:none"><path d="M10 0 L20 0"/></g>
+        <g visibility="hidden"><path d="M20 0 L30 0"/></g>
+        <path d="M30 0 L40 0"/>
+    `));
+    assert.equal(parts.length, 1);
+    pointCloseTo(parts[0].startPoint, { x: 30, y: 0 });
+});
+
+test('visible SVG children may override inherited visibility, but not display none', () => {
+    const parts = parseSVG(svg(`
+        <g visibility="hidden"><path visibility="visible" d="M0 0 L10 0"/></g>
+        <g style="display:none!important"><path style="display:block" d="M10 0 L20 0"/></g>
+        <path style="display:block;display:none" d="M20 0 L30 0"/>
+        <path style="display:none!important;display:block" d="M30 0 L40 0"/>
+    `));
+    assert.equal(parts.length, 1);
+    pointCloseTo(parts[0].startPoint, { x: 0, y: 0 });
+});
+
 test('the browser smoke SVG fixture imports as two separate milling parts', async () => {
     const source = await readFile(new URL('./fixtures/compound-path.svg', import.meta.url), 'utf8');
     const parts = parseSVG(source);
